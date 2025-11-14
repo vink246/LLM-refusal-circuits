@@ -17,6 +17,7 @@ class ModelConfig:
     torch_dtype: str = "float16"
     device_map: str = "auto"
     trust_remote_code: bool = False
+    cache_dir: Optional[str] = None
 
 
 class ModelWrapper:
@@ -32,15 +33,31 @@ class ModelWrapper:
     def load_model(self):
         """Load the model and tokenizer"""
         print(f"Loading model: {self.config.model_name}")
+        if self.config.cache_dir:
+            print(f"Using cache directory: {self.config.cache_dir}")
+        
+        model_kwargs = {
+            'torch_dtype': getattr(torch, self.config.torch_dtype) if hasattr(torch, self.config.torch_dtype) else torch.float16,
+            'device_map': self.config.device_map,
+            'trust_remote_code': self.config.trust_remote_code
+        }
+        if self.config.cache_dir:
+            model_kwargs['cache_dir'] = self.config.cache_dir
+        
         self.model = AutoModelForCausalLM.from_pretrained(
             self.config.model_name,
-            torch_dtype=getattr(torch, self.config.torch_dtype) if hasattr(torch, self.config.torch_dtype) else torch.float16,
-            device_map=self.config.device_map,
-            trust_remote_code=self.config.trust_remote_code
+            **model_kwargs
         )
+        
+        tokenizer_kwargs = {
+            'trust_remote_code': self.config.trust_remote_code
+        }
+        if self.config.cache_dir:
+            tokenizer_kwargs['cache_dir'] = self.config.cache_dir
+        
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.config.model_name,
-            trust_remote_code=self.config.trust_remote_code
+            **tokenizer_kwargs
         )
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -199,7 +216,8 @@ def load_model_with_hooks(
     layers: List[str],
     device: str = "cuda",
     torch_dtype: str = "float16",
-    trust_remote_code: bool = False
+    trust_remote_code: bool = False,
+    cache_dir: Optional[str] = None
 ) -> ModelWrapper:
     """
     Factory function to load model with activation hooks.
@@ -210,6 +228,7 @@ def load_model_with_hooks(
         device: Device to load model on
         torch_dtype: Torch dtype for model weights
         trust_remote_code: Whether to trust remote code
+        cache_dir: Optional HuggingFace cache directory for model downloads
         
     Returns:
         ModelWrapper instance with hooks set up
@@ -218,7 +237,8 @@ def load_model_with_hooks(
         model_name=model_name,
         device_map=device,
         torch_dtype=torch_dtype,
-        trust_remote_code=trust_remote_code
+        trust_remote_code=trust_remote_code,
+        cache_dir=cache_dir
     )
     model_wrapper = ModelWrapper(config)
     model_wrapper.load_model()
