@@ -283,11 +283,6 @@ class DataAnalyzer:
         
         if imbalanced_categories:
             print(f"\n⚠️  Found {len(imbalanced_categories)} categories with <{min_toxic_ratio}% toxic samples.")
-            print("   This may significantly impact SAE training quality.")
-            print("   Consider:")
-            print("   - Using data augmentation for toxic samples")
-            print("   - Training separate SAEs for safe vs toxic")
-            print("   - Using weighted sampling during SAE training")
         else:
             print("✓ No severe imbalances detected.")
         
