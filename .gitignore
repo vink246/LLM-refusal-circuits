@@ -56,7 +56,6 @@ Thumbs.db
 
 # Model cache (if using HuggingFace)
 .cache/
-models/
 
 # Temporary files
 *.tmp

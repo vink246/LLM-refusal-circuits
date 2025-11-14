@@ -1,0 +1,37 @@
+# OR-Bench Balanced Dataset Configuration
+# Two-stage approach for handling data imbalance
+
+dataset:
+  # Path to OR-Bench dataset directory
+  path: "data/raw/or-bench"
+  
+  # Categories to use (empty = all available)
+  categories: []
+  # Example:
+  # categories:
+  #   - violence
+  #   - deception
+  #   - privacy
+
+  # Strategy for handling category imbalance
+  # "use_all": Use all available toxic samples per category (unequal sizes)
+  # "equalize": Use minimum toxic samples across all categories (equal sizes)
+  category_balance_strategy: "use_all"  # Recommended: use_all for Stage 1
+  
+  # Shuffle data
+  shuffle: true
+
+# Stage 1: Data Collection
+# - Uses all available toxic samples per category
+# - Matches with equal number of safe samples
+# - Results in balanced safe/toxic but unequal category sizes
+
+# Stage 2: SAE Training
+# - Single SAE trained on ALL data (safe + toxic, all categories)
+# - Category weighting handles imbalance during training
+# - Ensures feature space comparability
+
+output:
+  # Output directory for processed data
+  dir: "data/processed"
+

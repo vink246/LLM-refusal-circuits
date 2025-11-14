@@ -1,0 +1,34 @@
+# Model configuration for Mistral-7B-Instruct-v0.1
+
+model:
+  name: "mistralai/Mistral-7B-Instruct-v0.1"
+  device: "cuda"  # or "cpu"
+  torch_dtype: "float16"  # "float16" or "float32"
+  trust_remote_code: false
+  
+  # Layers to collect activations from
+  # Format: residuals_N, mlp_N, or attention_N where N is layer index
+  activation_layers:
+    - "residuals_0"
+    - "residuals_5"
+    - "residuals_10"
+    - "residuals_15"
+    - "residuals_20"
+    - "residuals_25"
+    - "residuals_30"
+    # Add more layers as needed
+
+inference:
+  batch_size: 4  # Adjust based on GPU memory
+  max_new_tokens: 20  # Number of tokens to generate
+  save_activations: true
+
+data:
+  # Data configuration (can be overridden by --data-config)
+  path: "data/raw/or-bench"
+  categories: []  # Empty = all available categories
+  category_balance_strategy: "use_all"  # "use_all" or "equalize"
+
+output:
+  result_dir: "results"
+

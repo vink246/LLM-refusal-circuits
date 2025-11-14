@@ -1,0 +1,41 @@
+# Circuit Discovery Configuration
+# Separate safe and toxic circuits with equalization for fair comparison
+
+circuit:
+  # Circuit discovery thresholds
+  node_threshold: 0.1
+  edge_threshold: 0.01
+  
+  # Aggregation method
+  aggregation_method: "none"  # "none", "mean", "max"
+  
+  # Attribution method
+  attribution_method: "stats"  # "stats", "ig", "atp"
+
+discovery:
+  # Discover separate circuits for safe and toxic
+  separate_safe_toxic: true
+  
+  # Categories to discover circuits for
+  categories: []  # Empty = all available
+
+analysis:
+  # Equalize circuits before comparison (recommended)
+  equalize_circuits: true
+  
+  # Compare circuits across categories
+  compare_categories: true
+  
+  # Generate visualizations
+  generate_visualizations: true
+
+# Stage 2: Circuit Comparison
+# - Circuits are equalized to minimum size for fair comparison
+# - Uses top-N features from each circuit
+# - Ensures fair comparison despite category imbalance
+
+output:
+  circuits_dir: "results/circuits"
+  visualizations_dir: "results/visualizations"
+  reports_dir: "results/reports"
+

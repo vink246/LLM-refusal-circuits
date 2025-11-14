@@ -13,7 +13,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.circuits.similarity import CircuitSimilarity
+from src.circuits.similarity import CircuitSimilarity, equalize_circuits
 from src.analysis.modularity import assess_modularity
 from src.visualization.heatmaps import (
     create_similarity_heatmap,
@@ -22,6 +22,7 @@ from src.visualization.heatmaps import (
 )
 from src.utils.config import load_config
 from src.utils.logging import setup_logging
+import json
 
 
 def main():
@@ -64,17 +65,32 @@ def main():
     print("Analyzing Circuits")
     print("=" * 80)
     
-    # Load circuits (implementation will be in CircuitSimilarity class)
-    similarity_analyzer = CircuitSimilarity(config)
-    circuits = similarity_analyzer.load_circuits(circuits_dir)
+    # Load circuits (TODO: implement circuit loading)
+    # For now, circuits should be loaded from JSON files
+    print("\nLoading circuits...")
+    circuits = {}  # Will be populated when circuit loading is implemented
+    
+    # TODO: Load circuits from JSON files in circuits_dir
+    # circuits = load_circuits_from_json(circuits_dir)
     
     if not circuits:
         print("Error: No circuits found. Please discover circuits first using discover_circuits.py")
+        print(f"  Expected in: {circuits_dir}")
         sys.exit(1)
+    
+    # Equalize circuits for fair comparison (Stage 2: Circuit Comparison)
+    print("\n" + "=" * 80)
+    print("Equalizing Circuits for Fair Comparison")
+    print("=" * 80)
+    
+    equalize = config.get('analysis', {}).get('equalize_circuits', True)
+    if equalize:
+        circuits = equalize_circuits(circuits)
     
     # Compute similarities
     print("\nComputing circuit similarities...")
-    similarities = similarity_analyzer.compute_all_similarities(circuits)
+    similarity_analyzer = CircuitSimilarity(config)
+    similarities = similarity_analyzer.compute_all_similarities(circuits, equalize=equalize)
     
     # Assess modularity
     print("\nAssessing modularity...")

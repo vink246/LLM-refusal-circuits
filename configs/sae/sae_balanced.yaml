@@ -1,0 +1,34 @@
+# SAE Training Configuration
+# Single SAE trained on ALL data for comparability
+
+sae:
+  # SAE architecture
+  hidden_dim: 8192  # 8x expansion factor
+  sparsity_coeff: 0.01
+  k_percent: 0.05  # 5% sparsity (guaranteed top-k)
+  
+training:
+  epochs: 100
+  batch_size: 512
+  max_samples: 100000  # Maximum samples to use for training
+  
+  # CRITICAL: Balance safe/toxic during training
+  balance_safe_toxic: true
+  
+  # Handle category imbalance
+  use_category_weights: true  # Weight categories inversely to frequency
+  
+  # Learning rate
+  learning_rate: 1e-3
+
+# IMPORTANT: This trains a SINGLE SAE on ALL data
+# - All categories (safe + toxic)
+# - Ensures feature space comparability
+# - Safe and toxic circuits use same features
+
+output:
+  save_dir: "results/saes"
+  
+  # Save training history
+  save_history: true
+
