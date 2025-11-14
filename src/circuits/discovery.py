@@ -440,13 +440,27 @@ class CircuitDiscoverer:
     
     def _save_circuit_to_json(self, circuit: SparseFeatureCircuit, filepath: Path):
         """Save a circuit to JSON file"""
+        # Convert numpy types to native Python types for JSON serialization
+        def convert_to_native(obj):
+            """Recursively convert numpy types to native Python types"""
+            if isinstance(obj, (np.integer, np.floating)):
+                return float(obj) if isinstance(obj, np.floating) else int(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, dict):
+                return {k: convert_to_native(v) for k, v in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                return [convert_to_native(item) for item in obj]
+            else:
+                return obj
+        
         circuit_data = {
             'nodes': {
                 node_id: {
                     'feature_id': node_data['feature_id'],
-                    'layer': node_data['layer'],
-                    'position': node_data['position'],
-                    'importance': circuit.node_importances.get(node_id, 0.0),
+                    'layer': int(node_data['layer']),  # Ensure int
+                    'position': int(node_data['position']),  # Ensure int
+                    'importance': float(circuit.node_importances.get(node_id, 0.0)),  # Convert to float
                     'type': node_data.get('type', 'sae_feature')
                 }
                 for node_id, node_data in circuit.nodes.items()
@@ -455,11 +469,14 @@ class CircuitDiscoverer:
                 f"{src}_{tgt}": {
                     'source': src,
                     'target': tgt,
-                    'importance': circuit.edge_importances.get((src, tgt), 0.0)
+                    'importance': float(circuit.edge_importances.get((src, tgt), 0.0))  # Convert to float
                 }
                 for (src, tgt), edge_data in circuit.edges.items()
             }
         }
+        
+        # Convert any remaining numpy types
+        circuit_data = convert_to_native(circuit_data)
         
         with open(filepath, 'w') as f:
             json.dump(circuit_data, f, indent=2)
