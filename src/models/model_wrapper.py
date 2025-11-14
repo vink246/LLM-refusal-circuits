@@ -61,6 +61,7 @@ class ModelWrapper:
         )
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.tokenizer.padding_side = 'left'    
         print(f"✓ Model loaded on device: {next(self.model.parameters()).device}")
         
     def setup_activation_hooks(self, layers: List[str]):
