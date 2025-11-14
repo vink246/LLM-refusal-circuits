@@ -1,0 +1,41 @@
+# Data Analysis Configuration
+# Configuration for analyzing OR-Bench dataset splits
+
+dataset:
+  # Path to OR-Bench dataset directory
+  # Should contain: or-bench-80k.csv, or-bench-hard-1k.csv, or-bench-toxic.csv
+  path: "data/raw/or-bench"
+  
+  # Categories to analyze (leave empty to analyze all available categories)
+  # If specified, only these categories will be included in analysis
+  categories: []
+  # Example:
+  # categories:
+  #   - violence
+  #   - deception
+  #   - privacy
+
+analysis:
+  # Minimum toxic ratio threshold for warnings (as percentage)
+  # Categories with toxic ratio below this will be flagged
+  min_toxic_ratio_warning: 10.0  # 10%
+  
+  # Generate visualizations
+  generate_plots: true
+  
+  # Plot settings
+  plots:
+    figsize: [16, 12]
+    dpi: 150
+    style: "seaborn-v0_8"
+
+output:
+  # Default output directory
+  dir: "results/data_analysis"
+  
+  # Save statistics to JSON
+  save_statistics: true
+  
+  # Save visualizations
+  save_plots: true
+

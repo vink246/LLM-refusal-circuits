@@ -24,7 +24,7 @@ llm-refusal-circuits/
 │   ├── visualization/ # Visualization
 │   ├── analysis/      # Statistics and reporting
 │   └── utils/         # Utilities
-├── scripts/           # Workflow scripts (01-06)
+├── scripts/           # Workflow scripts
 ├── notebooks/         # Jupyter notebooks
 ├── tests/             # Unit tests
 ├── docs/              # Documentation
@@ -56,32 +56,39 @@ hf download bench-llm/or-bench --repo-type dataset --local-dir data/raw/or-bench
 
 ```bash
 # Step 1: Analyze data splits
-python scripts/01_analyze_data.py --config configs/data/orbench_default.yaml
+python scripts/analyze_data.py --config configs/data/orbench_default.yaml
 
 # Step 2: Collect activations
-python scripts/02_collect_activations.py --config configs/models/llama2_7b.yaml
+python scripts/collect_activations.py --config configs/models/llama2_7b.yaml
 
 # Step 3: Train SAEs
-python scripts/03_train_saes.py --config configs/sae/sae_balanced.yaml
+python scripts/train_saes.py --config configs/sae/sae_balanced.yaml
 
 # Step 4: Discover circuits
-python scripts/04_discover_circuits.py --config configs/circuits/discovery_separate_safe_toxic.yaml
+python scripts/discover_circuits.py --config configs/circuits/discovery_separate_safe_toxic.yaml
 
 # Step 5: Analyze circuits
-python scripts/05_analyze_circuits.py --config configs/circuits/discovery_separate_safe_toxic.yaml
+python scripts/analyze_circuits.py --config configs/circuits/discovery_separate_safe_toxic.yaml
 
 # Step 6: Generate report
-python scripts/06_generate_report.py --results-dir results/
+python scripts/generate_report.py --results-dir results/
 ```
 
 ## Workflow Scripts
 
-1. **`01_analyze_data.py`** - Analyze data splits (safe/toxic/hard)
-2. **`02_collect_activations.py`** - Run inference and collect activations
-3. **`03_train_saes.py`** - Train sparse autoencoders
-4. **`04_discover_circuits.py`** - Discover circuits for each category
-5. **`05_analyze_circuits.py`** - Compare circuits and generate visualizations
-6. **`06_generate_report.py`** - Generate comprehensive final report
+The analysis pipeline consists of six main scripts:
+
+1. **`analyze_data.py`** - Analyze data splits (safe/toxic/hard) and identify imbalances
+2. **`collect_activations.py`** - Run inference on models and collect activations from specified layers
+3. **`train_saes.py`** - Train sparse autoencoders on collected activations
+4. **`discover_circuits.py`** - Discover sparse feature circuits for each category
+5. **`analyze_circuits.py`** - Compare circuits across categories and generate visualizations
+6. **`generate_report.py`** - Generate comprehensive final analysis report
+
+Each script can be run independently or as part of the complete pipeline. See individual script help for options:
+```bash
+python scripts/<script_name>.py --help
+```
 
 ## Configuration
 
