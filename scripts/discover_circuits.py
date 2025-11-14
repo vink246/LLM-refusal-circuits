@@ -30,9 +30,21 @@ def main():
         help="Path to circuit discovery configuration YAML file"
     )
     parser.add_argument(
-        "--sae-config",
+        "--result-dir",
         type=str,
-        help="Path to SAE configuration YAML file (if different from circuit config)"
+        default="results",
+        help="Result directory containing activations and refusal labels"
+    )
+    parser.add_argument(
+        "--model-name",
+        type=str,
+        help="Model name (overrides config)"
+    )
+    parser.add_argument(
+        "--categories",
+        type=str,
+        nargs='+',
+        help="Categories to use (overrides config)"
     )
     
     args = parser.parse_args()
@@ -40,23 +52,31 @@ def main():
     # Setup logging
     setup_logging()
     
-    # Load configurations
+    # Load configuration
     circuit_config = load_config(args.config)
-    if args.sae_config:
-        sae_config = load_config(args.sae_config)
-        # Merge SAE config if needed
-        circuit_config['sae'] = sae_config
     
-    # Load SAEs
-    sae_manager = SAEManager(circuit_config.get('sae', {}))
-    saes = sae_manager.load_all()
+    # Get model and categories
+    model_name = args.model_name or circuit_config.get('model', {}).get('name')
+    if not model_name:
+        raise ValueError("Model name must be provided via --model-name or config")
     
-    if not saes:
-        print("Error: No trained SAEs found. Please train SAEs first using train_saes.py")
-        sys.exit(1)
+    categories = args.categories or circuit_config.get('discovery', {}).get('categories', [])
+    if not categories:
+        # Try to infer from activation files
+        from glob import glob
+        activation_dir = Path(args.result_dir) / "activations"
+        safe_model_name = model_name.replace('/', '-').replace(' ', '_')
+        pattern = str(activation_dir / f"{safe_model_name}_*_activations.pt")
+        files = glob(pattern)
+        categories = list(set([Path(f).stem.split('_')[-2] for f in files]))
+        print(f"Inferred categories from activation files: {categories}")
+    
+    # Initialize SAE manager
+    sae_dir = circuit_config.get('sae', {}).get('save_dir') or circuit_config.get('output', {}).get('save_dir', 'results/saes')
+    sae_manager = SAEManager(sae_dir=sae_dir)
     
     # Initialize circuit discoverer
-    discoverer = CircuitDiscoverer(circuit_config, saes)
+    discoverer = CircuitDiscoverer(circuit_config, sae_manager)
     
     # Discover circuits
     print("=" * 80)
@@ -68,10 +88,7 @@ def main():
     else:
         print("Mode: Combined circuits")
     
-    circuits = discoverer.discover_all()
-    
-    # Save circuits
-    discoverer.save_circuits()
+    discoverer.discover_all(args.result_dir, model_name, categories)
     
     print("\n✓ Circuit discovery complete!")
     print(f"  Circuits saved to: {circuit_config.get('output', {}).get('circuits_dir', 'results/circuits')}")

@@ -1,6 +1,10 @@
 # Circuit Discovery Configuration
 # Separate safe and toxic circuits with equalization for fair comparison
 
+model:
+  # Model name (required) - must match the model used for activation collection
+  name: "meta-llama/Llama-2-7b-chat-hf"  # e.g., "meta-llama/Llama-2-7b-chat-hf"
+
 circuit:
   # Circuit discovery thresholds
   node_threshold: 0.1
