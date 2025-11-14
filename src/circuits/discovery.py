@@ -161,11 +161,19 @@ class CircuitDiscoverer:
         Discover a single circuit from encoded activations.
         
         Uses statistical correlation to identify important features.
+        When all labels are the same (e.g., all safe or all toxic), uses feature magnitude instead.
         """
         circuit = SparseFeatureCircuit()
         refusal_labels_tensor = torch.tensor(refusal_labels, dtype=torch.float32)
         
         print(f"    Discovering {circuit_type} circuit...")
+        
+        # Check if labels have variance (for correlation-based discovery)
+        labels_np = refusal_labels_tensor.cpu().numpy()
+        has_label_variance = np.std(labels_np) > 0
+        
+        if not has_label_variance:
+            print(f"      Note: All labels are the same ({labels_np[0]}). Using feature magnitude instead of correlation.")
         
         # Aggregate activations across sequence dimension if needed
         aggregated_features = {}
@@ -188,29 +196,50 @@ class CircuitDiscoverer:
             # features: (batch, hidden_dim)
             batch_size, hidden_dim = features.shape
             
-            # Compute correlation between each feature and refusal labels
             features_np = features.cpu().numpy()
-            labels_np = refusal_labels_tensor.cpu().numpy()
             
             correlations = []
             for feat_idx in range(hidden_dim):
                 feat_values = features_np[:, feat_idx]
-                # Compute Pearson correlation
-                if np.std(feat_values) > 0 and np.std(labels_np) > 0:
-                    corr, p_value = stats.pearsonr(feat_values, labels_np)
-                    correlations.append((feat_idx, abs(corr), corr, p_value))
+                
+                if has_label_variance:
+                    # Use correlation with labels (original method)
+                    if np.std(feat_values) > 0 and np.std(labels_np) > 0:
+                        corr, p_value = stats.pearsonr(feat_values, labels_np)
+                        correlations.append((feat_idx, abs(corr), corr, p_value))
+                    else:
+                        correlations.append((feat_idx, 0.0, 0.0, 1.0))
                 else:
-                    correlations.append((feat_idx, 0.0, 0.0, 1.0))
+                    # No label variance: use feature magnitude/importance instead
+                    # Use mean absolute activation as importance
+                    mean_abs_activation = np.mean(np.abs(feat_values))
+                    # Also consider variance (features that vary more might be more informative)
+                    feat_variance = np.var(feat_values) if np.std(feat_values) > 0 else 0.0
+                    # Combined importance: weighted combination
+                    importance = 0.7 * mean_abs_activation + 0.3 * feat_variance
+                    # Normalize to 0-1 range for comparison with correlation threshold
+                    # We'll scale it based on the distribution
+                    correlations.append((feat_idx, importance, importance, 0.0))
             
-            # Sort by absolute correlation
+            # Sort by importance (correlation or magnitude)
             correlations.sort(key=lambda x: x[1], reverse=True)
             
-            # Debug: Print correlation statistics
+            # Normalize importance scores if using magnitude (scale to 0-1 range)
+            if not has_label_variance and len(correlations) > 0:
+                max_importance = correlations[0][1]
+                if max_importance > 0:
+                    # Scale so max is 1.0, then we can use the same threshold
+                    scale_factor = 1.0 / max_importance
+                    correlations = [(idx, imp * scale_factor, imp * scale_factor, p) 
+                                    for idx, imp, _, p in correlations]
+            
+            # Debug: Print correlation/importance statistics
             if len(correlations) > 0:
-                max_corr = correlations[0][1]
+                max_val = correlations[0][1]
                 top_10_avg = np.mean([c[1] for c in correlations[:10]])
                 num_above_threshold = sum(1 for c in correlations if c[1] >= self.circuit_config.node_threshold)
-                print(f"        Layer {layer}: max_corr={max_corr:.4f}, top10_avg={top_10_avg:.4f}, "
+                metric_name = "importance" if not has_label_variance else "corr"
+                print(f"        Layer {layer}: max_{metric_name}={max_val:.4f}, top10_avg={top_10_avg:.4f}, "
                       f"above_threshold({self.circuit_config.node_threshold})={num_above_threshold}/{len(correlations)}")
             
             # Add top features as nodes
@@ -233,20 +262,28 @@ class CircuitDiscoverer:
         # If no nodes found, suggest lowering threshold
         if len(all_nodes) == 0:
             print(f"      WARNING: No features found! Try lowering node_threshold (current: {self.circuit_config.node_threshold})")
-            # Show top correlations anyway
+            # Show top values anyway
             if len(aggregated_features) > 0:
-                all_correlations = []
+                all_values = []
                 for layer, features in aggregated_features.items():
                     features_np = features.cpu().numpy()
-                    labels_np = refusal_labels_tensor.cpu().numpy()
                     for feat_idx in range(min(100, features.shape[1])):  # Check first 100 features
                         feat_values = features_np[:, feat_idx]
-                        if np.std(feat_values) > 0 and np.std(labels_np) > 0:
-                            corr, _ = stats.pearsonr(feat_values, labels_np)
-                            all_correlations.append(abs(corr))
-                if all_correlations:
-                    print(f"      Top correlations found: max={max(all_correlations):.4f}, "
-                          f"mean={np.mean(all_correlations):.4f}, median={np.median(all_correlations):.4f}")
+                        if has_label_variance:
+                            if np.std(feat_values) > 0 and np.std(labels_np) > 0:
+                                corr, _ = stats.pearsonr(feat_values, labels_np)
+                                all_values.append(abs(corr))
+                        else:
+                            # Use magnitude
+                            mean_abs = np.mean(np.abs(feat_values))
+                            all_values.append(mean_abs)
+                if all_values:
+                    max_val = max(all_values)
+                    # Normalize for display
+                    if max_val > 0:
+                        all_values = [v / max_val for v in all_values]
+                    print(f"      Top values found: max={max(all_values):.4f}, "
+                          f"mean={np.mean(all_values):.4f}, median={np.median(all_values):.4f}")
         
         # Discover edges (connections between features across layers)
         if len(aggregated_features) > 1:
