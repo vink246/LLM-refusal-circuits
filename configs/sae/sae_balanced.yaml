@@ -1,6 +1,17 @@
 # SAE Training Configuration
 # Single SAE trained on ALL data for comparability
 
+model:
+  # Model name (required) - must match the model used for activation collection
+  name: "meta-llama/Llama-2-7b-chat-hf"  # e.g., "meta-llama/Llama-2-7b-chat-hf" or "mistralai/Mistral-7B-Instruct-v0.1"
+  
+  # Activation layers to train SAEs for (optional - will be inferred from activation files if not provided)
+  activation_layers: []  # e.g., ["residuals_0", "residuals_5", "residuals_10"]
+
+data:
+  # Categories to use (optional - will be inferred from activation files if not provided)
+  categories: []  # e.g., ["violence", "deception"] or empty list for all
+
 sae:
   # SAE architecture
   hidden_dim: 8192  # 8x expansion factor
