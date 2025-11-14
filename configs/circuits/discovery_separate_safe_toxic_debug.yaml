@@ -1,0 +1,47 @@
+# Circuit Discovery Configuration (Debug/Low Thresholds)
+# Use this config if no circuits are being discovered with default thresholds
+
+model:
+  # Model name (required) - must match the model used for activation collection
+  name: "meta-llama/Llama-2-7b-chat-hf"  # e.g., "meta-llama/Llama-2-7b-chat-hf"
+
+circuit:
+  # Circuit discovery thresholds (LOWERED for debugging)
+  node_threshold: 0.01  # Lowered from 0.1 - correlation threshold for important features
+  edge_threshold: 0.001  # Lowered from 0.01 - correlation threshold for edges
+  
+  # Aggregation method
+  aggregation_method: "mean"  # "mean", "max", or "none" (uses last token)
+  
+  # Attribution method
+  attribution_method: "stats"  # "stats", "ig", "atp"
+
+discovery:
+  # Discover separate circuits for safe and toxic
+  separate_safe_toxic: true
+  
+  # Categories to discover circuits for
+  categories: []  # Empty = all available
+
+analysis:
+  # Equalize circuits before comparison (recommended)
+  equalize_circuits: true
+  
+  # Compare circuits across categories
+  compare_categories: true
+  
+  # Generate visualizations
+  generate_visualizations: true
+
+# Debugging Tips:
+# 1. Start with very low thresholds (0.01 for nodes, 0.001 for edges)
+# 2. Check the debug output to see what correlations are being found
+# 3. Gradually increase thresholds to filter noise
+# 4. If correlations are very low (<0.05), the SAE might not be learning useful features
+# 5. Check that activations are being encoded properly (sparsity should be high for SAE features)
+
+output:
+  circuits_dir: "results/circuits"
+  visualizations_dir: "results/visualizations"
+  reports_dir: "results/reports"
+

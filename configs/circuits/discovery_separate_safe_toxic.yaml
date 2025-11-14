@@ -7,11 +7,12 @@ model:
 
 circuit:
   # Circuit discovery thresholds
-  node_threshold: 0.1
-  edge_threshold: 0.01
+  # Start with lower values if no circuits found, then increase to filter noise
+  node_threshold: 0.05  # Correlation threshold for important features (0.01-0.2 recommended)
+  edge_threshold: 0.005  # Correlation threshold for edges (0.001-0.05 recommended)
   
   # Aggregation method
-  aggregation_method: "none"  # "none", "mean", "max"
+  aggregation_method: "mean"  # "mean" (recommended), "max", or "none" (uses last token)
   
   # Attribution method
   attribution_method: "stats"  # "stats", "ig", "atp"

@@ -70,9 +70,17 @@ class CircuitDiscoverer:
         print(f"  Loading activations from: {activation_file}")
         raw_activations = torch.load(activation_file, map_location='cpu')
         
+        # Debug: Print raw activation info
+        print(f"  Raw activation info:")
+        for layer, act in raw_activations.items():
+            print(f"    {layer}: shape={act.shape}, dtype={act.dtype}")
+        
         # Get layers
         layers = list(raw_activations.keys())
         print(f"  Layers: {layers}")
+        
+        # Check refusal labels
+        print(f"  Refusal labels: {sum(refusal_labels)} toxic, {len(refusal_labels) - sum(refusal_labels)} safe out of {len(refusal_labels)} total")
         
         # Load SAEs for this model
         saes = self.sae_manager.load_saes_for_model(model_name, layers)
@@ -82,6 +90,16 @@ class CircuitDiscoverer:
         # Encode activations with SAEs
         print("  Encoding activations with SAEs...")
         encoded_activations = self.sae_manager.encode_activations(raw_activations, saes)
+        
+        # Debug: Print activation shapes and sparsity
+        print("  Encoded activation shapes:")
+        for layer, features in encoded_activations.items():
+            print(f"    {layer}: {features.shape}")
+            # Check sparsity (for SAE features, most should be zero)
+            if features.numel() > 0:
+                sparsity = (features == 0).float().mean().item()
+                print(f"      Sparsity: {sparsity:.2%} (fraction of zeros)")
+                print(f"      Non-zero features: {(features != 0).sum().item()}")
         
         if self.separate_safe_toxic:
             # Split into safe and toxic
@@ -105,6 +123,11 @@ class CircuitDiscoverer:
             toxic_labels = [True] * toxic_indices.sum().item()
             
             print(f"  Safe samples: {len(safe_labels)}, Toxic samples: {len(toxic_labels)}")
+            
+            # Debug: Check label distribution
+            if len(safe_labels) == 0 or len(toxic_labels) == 0:
+                print(f"  WARNING: Missing samples! Safe={len(safe_labels)}, Toxic={len(toxic_labels)}")
+                print(f"  Original labels: {sum(refusal_labels)} toxic, {len(refusal_labels) - sum(refusal_labels)} safe")
             
             # Discover circuits separately
             safe_circuit = self._discover_single_circuit(
@@ -182,6 +205,14 @@ class CircuitDiscoverer:
             # Sort by absolute correlation
             correlations.sort(key=lambda x: x[1], reverse=True)
             
+            # Debug: Print correlation statistics
+            if len(correlations) > 0:
+                max_corr = correlations[0][1]
+                top_10_avg = np.mean([c[1] for c in correlations[:10]])
+                num_above_threshold = sum(1 for c in correlations if c[1] >= self.circuit_config.node_threshold)
+                print(f"        Layer {layer}: max_corr={max_corr:.4f}, top10_avg={top_10_avg:.4f}, "
+                      f"above_threshold({self.circuit_config.node_threshold})={num_above_threshold}/{len(correlations)}")
+            
             # Add top features as nodes
             layer_idx = int(layer.split('_')[1]) if '_' in layer else 0
             for feat_idx, abs_corr, corr, p_value in correlations:
@@ -197,7 +228,25 @@ class CircuitDiscoverer:
                     )
                     all_nodes.append((node_id, layer_idx, abs_corr))
         
-        print(f"      Found {len(all_nodes)} important features")
+        print(f"      Found {len(all_nodes)} important features (threshold: {self.circuit_config.node_threshold})")
+        
+        # If no nodes found, suggest lowering threshold
+        if len(all_nodes) == 0:
+            print(f"      WARNING: No features found! Try lowering node_threshold (current: {self.circuit_config.node_threshold})")
+            # Show top correlations anyway
+            if len(aggregated_features) > 0:
+                all_correlations = []
+                for layer, features in aggregated_features.items():
+                    features_np = features.cpu().numpy()
+                    labels_np = refusal_labels_tensor.cpu().numpy()
+                    for feat_idx in range(min(100, features.shape[1])):  # Check first 100 features
+                        feat_values = features_np[:, feat_idx]
+                        if np.std(feat_values) > 0 and np.std(labels_np) > 0:
+                            corr, _ = stats.pearsonr(feat_values, labels_np)
+                            all_correlations.append(abs(corr))
+                if all_correlations:
+                    print(f"      Top correlations found: max={max(all_correlations):.4f}, "
+                          f"mean={np.mean(all_correlations):.4f}, median={np.median(all_correlations):.4f}")
         
         # Discover edges (connections between features across layers)
         if len(aggregated_features) > 1:
@@ -230,7 +279,13 @@ class CircuitDiscoverer:
                             if edge_importance >= self.circuit_config.edge_threshold:
                                 circuit.add_edge(node1_id, node2_id, edge_importance)
         
-        print(f"      Found {len(circuit.edges)} edges")
+        print(f"      Found {len(circuit.edges)} edges (threshold: {self.circuit_config.edge_threshold})")
+        
+        # Debug: Print circuit summary
+        if len(all_nodes) > 0:
+            print(f"      Circuit summary: {len(circuit.nodes)} nodes, {len(circuit.edges)} edges")
+            top_nodes = circuit.get_top_nodes(min(5, len(circuit.nodes)))
+            print(f"      Top 5 nodes: {[(n, circuit.node_importances[n]) for n in top_nodes]}")
         
         return circuit
     
