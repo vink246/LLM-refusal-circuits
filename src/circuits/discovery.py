@@ -34,7 +34,8 @@ class CircuitDiscoverer:
             node_threshold=config.get('circuit', {}).get('node_threshold', 0.1),
             edge_threshold=config.get('circuit', {}).get('edge_threshold', 0.01),
             aggregation_method=config.get('circuit', {}).get('aggregation_method', 'none'),
-            attribution_method=config.get('circuit', {}).get('attribution_method', 'stats')
+            attribution_method=config.get('circuit', {}).get('attribution_method', 'stats'),
+            top_n_per_layer=config.get('circuit', {}).get('top_n_per_layer', 100)
         )
         self.separate_safe_toxic = config.get('discovery', {}).get('separate_safe_toxic', False)
         self.circuits_dir = Path(config.get('output', {}).get('circuits_dir', 'results/circuits'))
@@ -224,44 +225,76 @@ class CircuitDiscoverer:
             # Sort by importance (correlation or magnitude)
             correlations.sort(key=lambda x: x[1], reverse=True)
             
-            # Normalize importance scores if using magnitude (scale to 0-1 range)
-            if not has_label_variance and len(correlations) > 0:
-                max_importance = correlations[0][1]
-                if max_importance > 0:
-                    # Scale so max is 1.0, then we can use the same threshold
-                    scale_factor = 1.0 / max_importance
-                    correlations = [(idx, imp * scale_factor, imp * scale_factor, p) 
-                                    for idx, imp, _, p in correlations]
+            # For magnitude-based discovery, use top-N instead of threshold
+            if not has_label_variance:
+                # Use top-N features per layer (more efficient than threshold)
+                top_n = self.circuit_config.top_n_per_layer
+                correlations = correlations[:top_n]
+                print(f"        Layer {layer}: Using top-{top_n} features (magnitude-based discovery)")
+            else:
+                # For correlation-based, use threshold
+                # Normalize importance scores if using magnitude (scale to 0-1 range)
+                if len(correlations) > 0:
+                    max_importance = correlations[0][1]
+                    if max_importance > 0:
+                        # Scale so max is 1.0, then we can use the same threshold
+                        scale_factor = 1.0 / max_importance
+                        correlations = [(idx, imp * scale_factor, imp * scale_factor, p) 
+                                        for idx, imp, _, p in correlations]
             
             # Debug: Print correlation/importance statistics
             if len(correlations) > 0:
                 max_val = correlations[0][1]
                 top_10_avg = np.mean([c[1] for c in correlations[:10]])
-                num_above_threshold = sum(1 for c in correlations if c[1] >= self.circuit_config.node_threshold)
-                metric_name = "importance" if not has_label_variance else "corr"
-                print(f"        Layer {layer}: max_{metric_name}={max_val:.4f}, top10_avg={top_10_avg:.4f}, "
-                      f"above_threshold({self.circuit_config.node_threshold})={num_above_threshold}/{len(correlations)}")
+                if has_label_variance:
+                    num_above_threshold = sum(1 for c in correlations if c[1] >= self.circuit_config.node_threshold)
+                    print(f"        Layer {layer}: max_corr={max_val:.4f}, top10_avg={top_10_avg:.4f}, "
+                          f"above_threshold({self.circuit_config.node_threshold})={num_above_threshold}/{len(correlations)}")
+                else:
+                    min_val = correlations[-1][1] if len(correlations) > 0 else 0
+                    print(f"        Layer {layer}: max_importance={max_val:.4f}, top10_avg={top_10_avg:.4f}, "
+                          f"min_importance={min_val:.4f}, selected={len(correlations)} features")
             
-            # Add top features as nodes
+            # Add features as nodes
             layer_idx = int(layer.split('_')[1]) if '_' in layer else 0
-            for feat_idx, abs_corr, corr, p_value in correlations:
-                if abs_corr >= self.circuit_config.node_threshold:
-                    # Extract position (use 0 for aggregated, or could use sequence position)
+            
+            if not has_label_variance:
+                # For magnitude-based: add all top-N features
+                for feat_idx, importance, _, _ in correlations:
                     position = 0
                     node_id = circuit.add_node(
                         feature_id=str(feat_idx),
                         layer=layer_idx,
                         position=position,
-                        importance=abs_corr,
+                        importance=importance,
                         feature_type="sae_feature"
                     )
-                    all_nodes.append((node_id, layer_idx, abs_corr))
+                    all_nodes.append((node_id, layer_idx, importance))
+            else:
+                # For correlation-based: use threshold
+                for feat_idx, abs_corr, corr, p_value in correlations:
+                    if abs_corr >= self.circuit_config.node_threshold:
+                        position = 0
+                        node_id = circuit.add_node(
+                            feature_id=str(feat_idx),
+                            layer=layer_idx,
+                            position=position,
+                            importance=abs_corr,
+                            feature_type="sae_feature"
+                        )
+                        all_nodes.append((node_id, layer_idx, abs_corr))
         
-        print(f"      Found {len(all_nodes)} important features (threshold: {self.circuit_config.node_threshold})")
+        if has_label_variance:
+            print(f"      Found {len(all_nodes)} important features (threshold: {self.circuit_config.node_threshold})")
+        else:
+            print(f"      Found {len(all_nodes)} important features (top-{self.circuit_config.top_n_per_layer} per layer)")
         
-        # If no nodes found, suggest lowering threshold
+        # If no nodes found, suggest adjustments
         if len(all_nodes) == 0:
-            print(f"      WARNING: No features found! Try lowering node_threshold (current: {self.circuit_config.node_threshold})")
+            if has_label_variance:
+                print(f"      WARNING: No features found! Try lowering node_threshold (current: {self.circuit_config.node_threshold})")
+            else:
+                print(f"      WARNING: No features found! This shouldn't happen with top-N approach. Check top_n_per_layer setting.")
             # Show top values anyway
             if len(aggregated_features) > 0:
                 all_values = []

@@ -8,8 +8,11 @@ model:
 circuit:
   # Circuit discovery thresholds
   # Start with lower values if no circuits found, then increase to filter noise
-  node_threshold: 0.05  # Correlation threshold for important features (0.01-0.2 recommended)
+  node_threshold: 0.05  # Correlation threshold for important features (used when labels have variance)
   edge_threshold: 0.005  # Correlation threshold for edges (0.001-0.05 recommended)
+  
+  # Top-N features per layer (used when labels have no variance - magnitude-based discovery)
+  top_n_per_layer: 100  # Number of top features to select per layer (50-200 recommended)
   
   # Aggregation method
   aggregation_method: "mean"  # "mean" (recommended), "max", or "none" (uses last token)

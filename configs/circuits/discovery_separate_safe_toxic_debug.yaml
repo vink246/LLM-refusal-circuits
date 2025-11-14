@@ -10,6 +10,9 @@ circuit:
   node_threshold: 0.01  # Lowered from 0.1 - correlation threshold for important features
   edge_threshold: 0.001  # Lowered from 0.01 - correlation threshold for edges
   
+  # Top-N features per layer (used when labels have no variance - magnitude-based discovery)
+  top_n_per_layer: 50  # Lower for debugging - number of top features per layer
+  
   # Aggregation method
   aggregation_method: "mean"  # "mean", "max", or "none" (uses last token)
   

@@ -14,6 +14,7 @@ class CircuitConfig:
     aggregation_method: str = "none"  # "none", "mean", "max"
     attribution_method: str = "ig"  # "ig" (integrated gradients) or "atp" (attribution patching)
     n_integration_steps: int = 10
+    top_n_per_layer: int = 100  # Top N features per layer when using magnitude-based discovery
 
 
 class SparseFeatureCircuit:
