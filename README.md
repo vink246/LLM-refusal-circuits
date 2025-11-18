@@ -81,11 +81,29 @@ The analysis pipeline consists of six main scripts:
 1. **`analyze_data.py`** - Analyze data splits (safe/toxic/hard) and identify imbalances
 2. **`collect_activations.py`** - Run inference on models and collect activations from specified layers
 3. **`train_saes.py`** - Train sparse autoencoders on collected activations
+    - **Automatic plotting**: Training loss plots are automatically generated after training completes
+    - Plots saved to: `results/saes/{model_name}/training_plots/`
 4. **`discover_circuits.py`** - Discover sparse feature circuits for each category
 5. **`analyze_circuits.py`** - Compare circuits across categories and generate visualizations
 6. **`generate_report.py`** - Generate comprehensive final analysis report
 
+### Additional Utilities
+
+-   **`plot_sae_training.py`** - Regenerate SAE training plots from saved history files
+
+```bash
+# Plot all models
+python scripts/plot_sae_training.py --sae-dir results/saes
+
+# Plot specific model with layer comparisons
+python scripts/plot_sae_training.py --model-name "meta-llama/Llama-2-7b-hf" --comparison
+
+# Plot from specific history file
+python scripts/plot_sae_training.py --history-file results/saes/model/layer_training_history.json
+```
+
 Each script can be run independently or as part of the complete pipeline. See individual script help for options:
+
 ```bash
 python scripts/<script_name>.py --help
 ```
@@ -94,18 +112,19 @@ python scripts/<script_name>.py --help
 
 All parameters are configured via YAML files in `configs/`:
 
-- `configs/data/` - Data processing settings
-- `configs/models/` - Model inference settings
-- `configs/sae/` - SAE training settings
-- `configs/circuits/` - Circuit discovery settings
+-   `configs/data/` - Data processing settings
+-   `configs/models/` - Model inference settings
+-   `configs/sae/` - SAE training settings
+-   `configs/circuits/` - Circuit discovery settings
 
 ## Documentation
 
 See `docs/` for detailed documentation:
-- `docs/setup.md` - Setup instructions
-- `docs/usage.md` - Usage guide
-- `docs/architecture.md` - Architecture overview
-- `docs/api.md` - API documentation
+
+-   `docs/setup.md` - Setup instructions
+-   `docs/usage.md` - Usage guide
+-   `docs/architecture.md` - Architecture overview
+-   `docs/api.md` - API documentation
 
 ## License
 

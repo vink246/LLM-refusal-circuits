@@ -14,6 +14,7 @@ from tqdm import tqdm
 
 from .sae_model import SparseAutoencoder
 from .sae_trainer import SAETrainer
+from ..visualization.training_plots import plot_sae_training_history, plot_reconstruction_loss_only
 
 
 class ActivationDataset(Dataset):
@@ -266,6 +267,17 @@ class SAEManager:
                 trainer.save(sae_path)
                 with open(model_sae_dir / f"{layer}_training_history.json", 'w') as f:
                     json.dump(history, f, indent=2)
+                
+                # Generate training plots
+                print("\nGenerating training plots...")
+                plots_dir = model_sae_dir / "training_plots"
+                plots_dir.mkdir(exist_ok=True)
+                
+                try:
+                    plot_sae_training_history(history, model_name, layer, plots_dir)
+                    plot_reconstruction_loss_only(history, model_name, layer, plots_dir)
+                except Exception as e:
+                    print(f"  Warning: Could not generate plots: {e}")
                 
                 print(f"SAE trained and saved to {sae_path}")
                 print("✓ This SAE will be used for BOTH safe and toxic circuit discovery")
