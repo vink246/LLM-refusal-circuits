@@ -1,0 +1,35 @@
+# Model configuration for Llama-2-7b-chat-hf with MIDDLE layers
+# Focuses on middle decoder layers (10-21) where refusal behavior often emerges
+
+model:
+    name: "meta-llama/Llama-2-7b-chat-hf"
+    device: "cuda" # or "cpu"
+    torch_dtype: "float16" # "float16" or "float32"
+    trust_remote_code: false
+    cache_dir: null # Optional: HuggingFace cache directory
+
+    # Collect from middle layers using range notation
+    # Research suggests refusal circuits are often in middle-to-late layers
+    activation_layers:
+        - "residuals_10-21" # Layers 10 through 21 (12 layers total)
+
+    # Alternative focused ranges:
+    # - ["residuals_8-24"]  # Wider middle range (17 layers)
+    # - ["residuals_15-25", "mlp_15-25"]  # Middle layers, both residuals and MLPs
+    # - ["residuals_10-15", "residuals_20-25"]  # Two focused windows
+
+inference:
+    batch_size: 4 # Standard batch size (fewer layers = more memory available)
+    max_new_tokens: 20
+    save_activations: true
+
+data:
+    path: "data/raw/or-bench"
+    categories: [] # Empty = all available categories
+    category_balance_strategy: "use_all"
+
+output:
+    result_dir: "results"
+# Memory usage: Much lower than "all" - about 1/3 the activation storage
+# Good balance between coverage and computational efficiency
+

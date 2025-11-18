@@ -75,6 +75,9 @@ class InferencePipeline:
         print(f"\nLoading model: {self.model_name}")
         if self.cache_dir:
             print(f"Using HuggingFace cache directory: {self.cache_dir}")
+        
+        print(f"\nRequested layers: {self.layers}")
+        
         self.model = load_model_with_hooks(
             model_name=self.model_name,
             layers=self.layers,
@@ -83,7 +86,21 @@ class InferencePipeline:
             trust_remote_code=self.trust_remote_code,
             cache_dir=self.cache_dir
         )
+        
+        # Show actual number of layers being collected
+        num_model_layers = self.model.get_num_layers()
+        expanded_layers = self.model.expand_layer_specs(self.layers)
+        
         print("✓ Model loaded and hooks set up")
+        print(f"  Total decoder layers in model: {num_model_layers}")
+        print(f"  Collecting from {len(expanded_layers)} layer(s)")
+        
+        # Memory estimate
+        if len(expanded_layers) > 15:
+            print(f"\n  💾 Memory usage note:")
+            print(f"     - {len(expanded_layers)} layers × batch_size × hidden_dim")
+            print(f"     - Current batch_size: {self.batch_size}")
+            print(f"     - Consider reducing batch_size if OOM errors occur")
     
     def run_inference_for_category(
         self,

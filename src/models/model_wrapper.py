@@ -64,6 +64,74 @@ class ModelWrapper:
         self.tokenizer.padding_side = 'left'    
         print(f"✓ Model loaded on device: {next(self.model.parameters()).device}")
         
+    def get_num_layers(self) -> int:
+        """Get the number of decoder layers in the model."""
+        if not hasattr(self.model, 'model') or not hasattr(self.model.model, 'layers'):
+            raise ValueError(f"Model architecture not supported. Expected model.model.layers structure.")
+        return len(self.model.model.layers)
+    
+    def expand_layer_specs(self, layers: List[str]) -> List[str]:
+        """
+        Expand layer specifications to handle shorthand notation.
+        
+        Supports:
+        - "all" or "residuals_all" -> all residual layers
+        - "mlp_all" -> all MLP layers
+        - "attention_all" -> all attention layers
+        - "residuals_0-10" -> residual layers 0 through 10
+        - "mlp_5-15" -> MLP layers 5 through 15
+        - Regular specs like "residuals_5" (unchanged)
+        
+        Args:
+            layers: List of layer specifications (may include shorthand)
+            
+        Returns:
+            Expanded list of explicit layer specifications
+        """
+        num_layers = self.get_num_layers()
+        expanded = []
+        
+        for layer_spec in layers:
+            # Handle "all" as shorthand for all residual layers
+            if layer_spec == "all":
+                layer_spec = "residuals_all"
+            
+            # Handle "*_all" specifications
+            if layer_spec == "residuals_all":
+                expanded.extend([f"residuals_{i}" for i in range(num_layers)])
+            elif layer_spec == "mlp_all":
+                expanded.extend([f"mlp_{i}" for i in range(num_layers)])
+            elif layer_spec == "attention_all":
+                expanded.extend([f"attention_{i}" for i in range(num_layers)])
+            
+            # Handle range specifications like "residuals_0-10"
+            elif '_' in layer_spec and '-' in layer_spec.split('_', 1)[1]:
+                parts = layer_spec.split('_')
+                layer_type = parts[0]
+                range_spec = '_'.join(parts[1:])
+                
+                try:
+                    start, end = range_spec.split('-')
+                    start_idx = int(start)
+                    end_idx = int(end) if end != '' else num_layers - 1
+                    
+                    # Validate indices
+                    if start_idx < 0 or end_idx >= num_layers or start_idx > end_idx:
+                        print(f"Warning: Invalid range {layer_spec}, skipping")
+                        continue
+                    
+                    for i in range(start_idx, end_idx + 1):
+                        expanded.append(f"{layer_type}_{i}")
+                except (ValueError, IndexError):
+                    print(f"Warning: Could not parse range specification: {layer_spec}")
+                    expanded.append(layer_spec)  # Keep original if parsing fails
+            
+            # Regular specification - keep as is
+            else:
+                expanded.append(layer_spec)
+        
+        return expanded
+    
     def setup_activation_hooks(self, layers: List[str]):
         """
         Set up hooks for collecting activations from specified layers.
@@ -72,6 +140,13 @@ class ModelWrapper:
         - residuals_N: Residual stream at layer N
         - mlp_N: MLP output at layer N
         - attention_N: Attention output at layer N
+        
+        Also supports shorthand:
+        - "all" or "residuals_all": All residual layers
+        - "mlp_all": All MLP layers
+        - "attention_all": All attention layers
+        - "residuals_0-10": Residual layers 0 through 10
+        - "mlp_5-15": MLP layers 5 through 15
         """
         self.activations.clear()
         self._remove_hooks()
@@ -79,28 +154,57 @@ class ModelWrapper:
         if not hasattr(self.model, 'model') or not hasattr(self.model.model, 'layers'):
             raise ValueError(f"Model architecture not supported for hooking. Expected model.model.layers structure.")
         
-        num_layers = len(self.model.model.layers)
-        print(f"Setting up activation hooks for {len(layers)} layer(s) (model has {num_layers} layers)")
+        num_layers = self.get_num_layers()
         
-        for layer_spec in layers:
+        # Expand shorthand layer specifications
+        expanded_layers = self.expand_layer_specs(layers)
+        
+        print(f"Setting up activation hooks for {len(expanded_layers)} layer(s) (model has {num_layers} layers)")
+        if len(expanded_layers) != len(layers):
+            print(f"  Expanded {len(layers)} specification(s) to {len(expanded_layers)} layer(s)")
+        
+        # Warn about memory usage for large collections
+        if len(expanded_layers) > 20:
+            print(f"  ⚠️  Warning: Collecting from {len(expanded_layers)} layers will use significant memory")
+            print(f"     Consider reducing batch_size in inference config")
+        
+        for layer_spec in expanded_layers:
             if layer_spec.startswith('residuals_'):
-                layer_idx = int(layer_spec.split('_')[1])
+                try:
+                    layer_idx = int(layer_spec.split('_')[1])
+                except ValueError:
+                    print(f"Warning: Invalid layer specification: {layer_spec}, skipping")
+                    continue
+                    
                 if layer_idx >= num_layers:
                     print(f"Warning: Layer {layer_idx} >= {num_layers}, skipping")
                     continue
                 self._hook_residual_layer(layer_idx)
+                
             elif layer_spec.startswith('mlp_'):
-                layer_idx = int(layer_spec.split('_')[1])
+                try:
+                    layer_idx = int(layer_spec.split('_')[1])
+                except ValueError:
+                    print(f"Warning: Invalid layer specification: {layer_spec}, skipping")
+                    continue
+                    
                 if layer_idx >= num_layers:
                     print(f"Warning: Layer {layer_idx} >= {num_layers}, skipping")
                     continue
                 self._hook_mlp_layer(layer_idx)
+                
             elif layer_spec.startswith('attention_'):
-                layer_idx = int(layer_spec.split('_')[1])
+                try:
+                    layer_idx = int(layer_spec.split('_')[1])
+                except ValueError:
+                    print(f"Warning: Invalid layer specification: {layer_spec}, skipping")
+                    continue
+                    
                 if layer_idx >= num_layers:
                     print(f"Warning: Layer {layer_idx} >= {num_layers}, skipping")
                     continue
                 self._hook_attention_layer(layer_idx)
+                
             else:
                 print(f"Warning: Unknown layer specification: {layer_spec}")
     

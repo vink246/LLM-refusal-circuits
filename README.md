@@ -59,7 +59,14 @@ hf download bench-llm/or-bench --repo-type dataset --local-dir data/raw/or-bench
 python scripts/analyze_data.py --config configs/data/orbench_default.yaml
 
 # Step 2: Collect activations
+# Option A: Sparse layers (quick, 7 layers)
 python scripts/collect_activations.py --config configs/models/llama2_7b.yaml
+
+# Option B: All decoder layers (comprehensive, 32 layers)
+python scripts/collect_activations.py --config configs/models/llama2_7b_all_layers.yaml
+
+# Option C: Middle layers only (focused, 12 layers)
+python scripts/collect_activations.py --config configs/models/llama2_7b_middle_layers.yaml
 
 # Step 3: Train SAEs
 python scripts/train_saes.py --config configs/sae/sae_balanced.yaml
@@ -113,9 +120,40 @@ python scripts/<script_name>.py --help
 All parameters are configured via YAML files in `configs/`:
 
 -   `configs/data/` - Data processing settings
--   `configs/models/` - Model inference settings
+-   `configs/models/` - Model inference settings (**NEW**: Supports layer shortcuts like `"all"`, `"residuals_0-31"`, `"mlp_all"`)
 -   `configs/sae/` - SAE training settings
 -   `configs/circuits/` - Circuit discovery settings
+
+See `configs/models/README.md` for detailed layer specification syntax.
+
+### Layer Collection Options
+
+The activation collection now supports flexible layer specifications:
+
+```yaml
+# Collect from ALL decoder layers (32 layers for Llama-2/Mistral)
+activation_layers:
+  - "all"  # Shorthand for all residual layers
+
+# Collect from a range of layers
+activation_layers:
+  - "residuals_0-31"   # All layers
+  - "residuals_10-21"  # Middle layers only
+
+# Collect specific layer types
+activation_layers:
+  - "residuals_all"  # All residual layers
+  - "mlp_all"        # All MLP layers
+  - "attention_all"  # All attention layers
+
+# Traditional explicit list (still supported)
+activation_layers:
+  - "residuals_0"
+  - "residuals_5"
+  - "residuals_10"
+```
+
+**Memory Note**: Collecting from all 32 layers requires more memory. The default batch_size is reduced from 4 to 2 in `*_all_layers.yaml` configs.
 
 ## Documentation
 
