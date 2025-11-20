@@ -14,7 +14,6 @@ from tqdm import tqdm
 
 from .sae_model import SparseAutoencoder
 from .sae_trainer import SAETrainer
-from ..visualization.training_plots import plot_sae_training_history, plot_reconstruction_loss_only
 
 
 class ActivationDataset(Dataset):
@@ -263,23 +262,22 @@ class SAEManager:
                 
                 history = trainer.train(dataloader, epochs)
                 
-                # Save SAE and training history
+                # Save SAE
                 trainer.save(sae_path)
-                with open(model_sae_dir / f"{layer}_training_history.json", 'w') as f:
-                    json.dump(history, f, indent=2)
                 
-                # Generate training plots
-                print("\nGenerating training plots...")
-                plots_dir = model_sae_dir / "training_plots"
-                plots_dir.mkdir(exist_ok=True)
-                
-                try:
-                    plot_sae_training_history(history, model_name, layer, plots_dir)
-                    plot_reconstruction_loss_only(history, model_name, layer, plots_dir)
-                except Exception as e:
-                    print(f"  Warning: Could not generate plots: {e}")
+                # Save only final reconstruction loss
+                final_reconstruction_loss = history['reconstruction_loss'][-1] if history['reconstruction_loss'] else None
+                if final_reconstruction_loss is not None:
+                    loss_file = model_sae_dir / f"{layer}_reconstruction_loss.json"
+                    with open(loss_file, 'w') as f:
+                        json.dump({
+                            'layer': layer,
+                            'final_reconstruction_loss': float(final_reconstruction_loss)
+                        }, f, indent=2)
                 
                 print(f"SAE trained and saved to {sae_path}")
+                if final_reconstruction_loss is not None:
+                    print(f"  Final reconstruction loss: {final_reconstruction_loss:.6f}")
                 print("✓ This SAE will be used for BOTH safe and toxic circuit discovery")
                 print("  (ensuring feature space comparability)")
                 
@@ -288,6 +286,68 @@ class SAEManager:
                 import traceback
                 traceback.print_exc()
                 continue
+        
+        # Create summary of reconstruction losses across all layers
+        print("\n" + "=" * 80)
+        print("SAE Training Summary")
+        print("=" * 80)
+        reconstruction_losses = {}
+        for layer in layers:
+            loss_file = model_sae_dir / f"{layer}_reconstruction_loss.json"
+            if loss_file.exists():
+                with open(loss_file, 'r') as f:
+                    loss_data = json.load(f)
+                    reconstruction_losses[layer] = loss_data['final_reconstruction_loss']
+        
+        if reconstruction_losses:
+            summary_file = model_sae_dir / "reconstruction_losses_summary.json"
+            with open(summary_file, 'w') as f:
+                json.dump({
+                    'model_name': model_name,
+                    'layers': reconstruction_losses
+                }, f, indent=2)
+            print(f"\nReconstruction losses by layer:")
+            for layer, loss in sorted(reconstruction_losses.items()):
+                print(f"  {layer}: {loss:.6f}")
+            print(f"\nSummary saved to: {summary_file}")
+            
+            # Create line plot of reconstruction loss vs layer
+            try:
+                import matplotlib.pyplot as plt
+                
+                # Extract layer indices for sorting
+                def get_layer_index(layer_name):
+                    """Extract layer number from layer name (e.g., 'residuals_5' -> 5)"""
+                    try:
+                        if '_' in layer_name:
+                            return int(layer_name.split('_')[1])
+                        return 0
+                    except:
+                        return 0
+                
+                # Sort layers by index
+                sorted_layers = sorted(reconstruction_losses.items(), key=lambda x: get_layer_index(x[0]))
+                layer_names = [layer for layer, _ in sorted_layers]
+                losses = [loss for _, loss in sorted_layers]
+                
+                # Create plot
+                plt.figure(figsize=(12, 6))
+                plt.plot(layer_names, losses, marker='o', linewidth=2, markersize=6)
+                plt.xlabel('Layer', fontsize=12)
+                plt.ylabel('Reconstruction Loss', fontsize=12)
+                plt.title(f'SAE Reconstruction Loss by Layer - {model_name}', fontsize=14, fontweight='bold')
+                plt.grid(True, alpha=0.3)
+                plt.xticks(rotation=45, ha='right')
+                plt.tight_layout()
+                
+                # Save plot
+                plot_file = model_sae_dir / "reconstruction_loss_by_layer.png"
+                plt.savefig(plot_file, dpi=150, bbox_inches='tight')
+                plt.close()
+                
+                print(f"  Plot saved to: {plot_file}")
+            except Exception as e:
+                print(f"  Warning: Could not generate plot: {e}")
     
     def load_saes_for_model(self, model_name: str, layers: List[str]) -> Dict[str, SAETrainer]:
         """Load trained SAEs for a model."""
