@@ -23,6 +23,7 @@ def main():
     parser.add_argument("--circuit_dir", type=str, default="results/circuits", help="Directory containing circuits")
     parser.add_argument("--output_dir", type=str, default="results/evaluation", help="Output directory for plots and results")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device")
+    parser.add_argument("--cache_dir", type=str, default=None, help="HuggingFace cache directory")
     args = parser.parse_args()
 
     # Setup directories
@@ -31,7 +32,10 @@ def main():
     
     # Load Model
     print(f"Loading model: {args.model}")
-    model_wrapper = load_model_with_hooks(args.model, [], device=args.device)
+    if args.cache_dir:
+        print(f"Using cache directory: {args.cache_dir}")
+        
+    model_wrapper = load_model_with_hooks(args.model, [], device=args.device, cache_dir=args.cache_dir)
     sae_manager = SAEManager()
     evaluator = CircuitEvaluator(model_wrapper, sae_manager, {})
     
