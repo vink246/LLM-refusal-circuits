@@ -194,3 +194,6 @@ def main():
             print(f"Saved stats to {stats_path}")
         else:
             print("Circuit is empty at threshold 0.05, skipping stats.")
+
+if __name__ == "__main__":
+    main()
