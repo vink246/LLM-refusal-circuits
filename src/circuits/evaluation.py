@@ -169,12 +169,21 @@ class CircuitEvaluator:
                 
             def hook_fn(activation, hook_name):
                 # activation: (batch, seq, hidden)
+                # Get SAE dtype and device for dtype conversion
+                sae_device = next(sae.sae.parameters()).device
+                sae_dtype = next(sae.sae.parameters()).dtype
+                
+                # Store original dtype to convert back later
+                original_dtype = activation.dtype
+                
+                # Convert activation to SAE dtype for encoding
+                activation_float = activation.to(dtype=sae_dtype, device=sae_device)
                 
                 # Encode
-                feature_acts = sae.sae.encode(activation)
+                feature_acts = sae.sae.encode(activation_float)
                 
                 # Create mask for important features
-                mask = torch.zeros(feature_acts.shape[-1], dtype=torch.bool, device=activation.device)
+                mask = torch.zeros(feature_acts.shape[-1], dtype=torch.bool, device=feature_acts.device)
                 mask[important_features] = True
                 
                 # Determine what to ablate
@@ -184,7 +193,7 @@ class CircuitEvaluator:
                     features_to_ablate = mask
                 
                 # Use mean feature activations (encode mean activation)
-                mean_act = mean_val.to(activation.device)
+                mean_act = mean_val.to(dtype=sae_dtype, device=sae_device)
                 mean_feature_acts = sae.sae.encode(mean_act)
                 
                 # Expand mean to match batch/seq
@@ -200,9 +209,12 @@ class CircuitEvaluator:
                 
                 # Add error term (original - reconstructed_original)
                 original_reconstructed = sae.sae.decode(feature_acts)
-                error = activation - original_reconstructed
+                error = activation_float - original_reconstructed
                 
-                return reconstructed + error
+                # Convert back to original dtype and device
+                result = (reconstructed + error).to(dtype=original_dtype, device=activation.device)
+                
+                return result
                 
             return hook_fn
 
