@@ -178,3 +178,108 @@ class CircuitSimilarity:
         
         return similarity_matrix
 
+    return similarity_matrix
+
+
+def compute_random_similarity_distribution(
+    circuit1: SparseFeatureCircuit,
+    circuit2: SparseFeatureCircuit,
+    n_permutations: int = 1000
+) -> List[float]:
+    """
+    Compute similarity distribution for random permutations of circuit2.
+    
+    Args:
+        circuit1: First circuit (fixed)
+        circuit2: Second circuit (to be permuted)
+        n_permutations: Number of random permutations
+        
+    Returns:
+        List of similarity scores for random permutations
+    """
+    import copy
+    import random
+    
+    random_scores = []
+    
+    # Get structure of circuit2 (nodes per layer)
+    nodes2 = circuit2.get_top_nodes(100) # Use same top-N as in similarity computation
+    layer_counts = {}
+    for node_id in nodes2:
+        layer = circuit2.nodes[node_id]['layer']
+        layer_counts[layer] = layer_counts.get(layer, 0) + 1
+        
+    # We need to know the total number of features per layer to sample from.
+    # Assuming SAE size is constant or we know it.
+    # For simplicity, let's assume a large enough pool of features (e.g. SAE hidden dim).
+    # If we don't know the max feature ID, we can't sample truly random features.
+    # But we can shuffle the *existing* features in the circuit?
+    # No, that would just be the same set of features.
+    # We need to sample *random* features from the SAE space.
+    # Let's assume SAE hidden dim is 32768 (Pythia-70m) or similar.
+    # We'll use a default max_feature_id if not provided.
+    max_feature_id = 32768 
+    
+    for _ in range(n_permutations):
+        # Create a random circuit with same structure as circuit2
+        random_circuit = SparseFeatureCircuit()
+        
+        for layer, count in layer_counts.items():
+            # Sample 'count' random features for this layer
+            random_features = random.sample(range(max_feature_id), count)
+            for feat_id in random_features:
+                random_circuit.add_node(
+                    feature_id=str(feat_id),
+                    layer=layer,
+                    position=0, # Position doesn't matter for similarity if we ignore it
+                    importance=1.0 # Dummy importance
+                )
+        
+        # Compute similarity
+        score = compute_circuit_similarity(circuit1, random_circuit)
+        random_scores.append(score)
+        
+    return random_scores
+
+
+def compute_significance(
+    observed_score: float,
+    random_scores: List[float]
+) -> Dict[str, float]:
+    """
+    Compute statistical significance of observed score vs random distribution.
+    
+    Args:
+        observed_score: Observed similarity score
+        random_scores: List of scores from random permutations
+        
+    Returns:
+        Dictionary with statistics (p_value, z_score, mean, std, ci_lower, ci_upper)
+    """
+    from scipy import stats
+    
+    mean = np.mean(random_scores)
+    std = np.std(random_scores)
+    
+    if std > 0:
+        z_score = (observed_score - mean) / std
+        # One-sided p-value (testing if observed > random)
+        p_value = 1 - stats.norm.cdf(z_score)
+    else:
+        z_score = 0.0
+        p_value = 1.0 if observed_score <= mean else 0.0
+        
+    # 95% Confidence Interval for the random distribution
+    # (Not for the observed score, but for the null hypothesis)
+    ci_lower = mean - 1.96 * std
+    ci_upper = mean + 1.96 * std
+    
+    return {
+        "observed": observed_score,
+        "random_mean": mean,
+        "random_std": std,
+        "z_score": z_score,
+        "p_value": p_value,
+        "ci_lower": ci_lower,
+        "ci_upper": ci_upper
+    }
