@@ -122,7 +122,8 @@ class CircuitEvaluator:
         target_outputs: List[str],
         circuit: SparseFeatureCircuit,
         ablation_values: Dict[str, torch.Tensor],
-        ablate_complement: bool = True
+        ablate_complement: bool = True,
+        ablate_all: bool = False
     ) -> float:
         """
         Run inference with circuit-based ablations.
@@ -134,20 +135,12 @@ class CircuitEvaluator:
             ablation_values: Mean values to use for ablation
             ablate_complement: If True, ablate everything NOT in the circuit (Faithfulness).
                              If False, ablate ONLY things in the circuit (Completeness check / Knockout).
+            ablate_all: If True, ablate all features in all layers (for F_empty).
+                             This overrides circuit-based logic.
                              
         Returns:
             Average metric score
         """
-        # Prepare target IDs
-        # Not needed for refusal metric based on indicators, but kept for interface compatibility
-        # target_encodings = self.model.tokenizer(
-        #     target_outputs, 
-        #     padding=True, 
-        #     return_tensors="pt",
-        #     add_special_tokens=False
-        # ).to(self.device)
-        # target_ids = target_encodings.input_ids
-        
         # Setup hooks
         self.model.clear_intervention_hooks()
         
@@ -160,7 +153,7 @@ class CircuitEvaluator:
             nodes_by_layer[layer_idx].append(int(node_data['feature_id']))
             
         # Define hook function factory
-        def make_hook_fn(layer_idx, important_features, mean_val):
+        def make_hook_fn(layer_idx, important_features, mean_val, ablate_all_features=False):
             # Load SAE for this layer
             sae = self.sae_manager.load_saes_for_model(self.model.config.model_name, [f"residuals_{layer_idx}"]).get(f"residuals_{layer_idx}")
             
@@ -182,15 +175,20 @@ class CircuitEvaluator:
                 # Encode
                 feature_acts = sae.sae.encode(activation_float)
                 
-                # Create mask for important features
-                mask = torch.zeros(feature_acts.shape[-1], dtype=torch.bool, device=feature_acts.device)
-                mask[important_features] = True
-                
                 # Determine what to ablate
-                if ablate_complement:
-                    features_to_ablate = ~mask
+                if ablate_all_features:
+                    # Ablate everything (all features)
+                    features_to_ablate = torch.ones(feature_acts.shape[-1], dtype=torch.bool, device=feature_acts.device)
                 else:
-                    features_to_ablate = mask
+                    # Create mask for important features
+                    mask = torch.zeros(feature_acts.shape[-1], dtype=torch.bool, device=feature_acts.device)
+                    mask[important_features] = True
+                    
+                    # Determine what to ablate based on ablate_complement
+                    if ablate_complement:
+                        features_to_ablate = ~mask  # Ablate everything NOT in circuit
+                    else:
+                        features_to_ablate = mask  # Ablate only things IN circuit
                 
                 # Use mean feature activations (encode mean activation)
                 mean_act = mean_val.to(dtype=sae_dtype, device=sae_device)
@@ -219,12 +217,41 @@ class CircuitEvaluator:
             return hook_fn
 
         # Register hooks
-        for layer_idx, nodes in nodes_by_layer.items():
-            layer_spec = f"residuals_{layer_idx}"
-            if layer_spec in ablation_values:
-                hook = make_hook_fn(layer_idx, nodes, ablation_values[layer_spec])
-                if hook:
-                    self.model.register_intervention_hook(layer_spec, hook)
+        if ablate_all:
+            # For F_empty: ablate ALL layers in ablation_values, regardless of circuit
+            for layer_spec, mean_val in ablation_values.items():
+                # Extract layer index from layer_spec (e.g., "residuals_21" -> 21)
+                try:
+                    layer_idx = int(layer_spec.split('_')[1])
+                    hook = make_hook_fn(layer_idx, [], mean_val, ablate_all_features=True)
+                    if hook:
+                        self.model.register_intervention_hook(layer_spec, hook)
+                except (IndexError, ValueError):
+                    continue
+        elif ablate_complement:
+            # For F(C): ablate everything NOT in circuit
+            # This means we need to register hooks for ALL layers in ablation_values:
+            # - Layers with circuit nodes: ablate features NOT in circuit
+            # - Layers without circuit nodes: ablate ALL features (no circuit features to preserve)
+            for layer_spec, mean_val in ablation_values.items():
+                try:
+                    layer_idx = int(layer_spec.split('_')[1])
+                    # Get circuit nodes for this layer (empty list if layer not in circuit)
+                    nodes = nodes_by_layer.get(layer_idx, [])
+                    hook = make_hook_fn(layer_idx, nodes, mean_val, ablate_all_features=False)
+                    if hook:
+                        self.model.register_intervention_hook(layer_spec, hook)
+                except (IndexError, ValueError):
+                    continue
+        else:
+            # For completeness/knockout: only ablate features IN the circuit
+            # Only register hooks for layers that have circuit nodes
+            for layer_idx, nodes in nodes_by_layer.items():
+                layer_spec = f"residuals_{layer_idx}"
+                if layer_spec in ablation_values:
+                    hook = make_hook_fn(layer_idx, nodes, ablation_values[layer_spec], ablate_all_features=False)
+                    if hook:
+                        self.model.register_intervention_hook(layer_spec, hook)
         
         # Run inference on prompts only
         inputs = self.model.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).to(self.device)
@@ -266,50 +293,55 @@ class CircuitEvaluator:
         """
         print("Evaluating circuit...")
         
-        # 1. Compute F(M) - Full Model Performance
+        # 1. Compute F(M) - Full Model Performance (no ablation)
         print("  Computing F(M)...")
         self.model.clear_intervention_hooks()
-        f_m = self.run_with_ablations(prompts, target_outputs, circuit, mean_activations, ablate_complement=False) 
-        # Wait, run_with_ablations with ablate_complement=False means we ablate the circuit? 
-        # No, we want NO ablation.
-        # I should add a 'no_ablation' flag or just pass empty circuit?
-        # Actually, if I pass an empty circuit and ablate_complement=False, it ablates nothing (mask is all false, features_to_ablate is all false).
-        
         empty_circuit = SparseFeatureCircuit()
+        # Pass empty circuit with ablate_complement=False - no hooks registered, so no ablation
         f_m = self.run_with_ablations(prompts, target_outputs, empty_circuit, mean_activations, ablate_complement=False)
         
         # 2. Compute F(C) - Circuit Performance (Faithfulness)
         # Ablate everything NOT in the circuit (replace with mean)
+        # This measures if the circuit alone can reproduce the model's behavior
         print("  Computing F(C)...")
         f_c = self.run_with_ablations(prompts, target_outputs, circuit, mean_activations, ablate_complement=True)
         
         # 3. Compute F(Empty) - Empty Circuit Performance (Random/Mean)
-        # Ablate everything (replace with mean)
+        # Ablate everything in all layers (replace with mean)
+        # This is the baseline when no circuit features are active
+        # With empty circuit and ablate_complement=True, all layers get hooks and all features are ablated
         print("  Computing F(Empty)...")
-        f_empty = self.run_with_ablations(prompts, target_outputs, empty_circuit, mean_activations, ablate_complement=True)
+        f_empty = self.run_with_ablations(prompts, target_outputs, empty_circuit, mean_activations, ablate_complement=True, ablate_all=True)
         
         # Calculate metrics
         # Faithfulness = (F(C) - F(Empty)) / (F(M) - F(Empty))
-        if f_m - f_empty != 0:
-            faithfulness = (f_c - f_empty) / (f_m - f_empty)
+        # Measures how well the circuit alone can reproduce model behavior relative to baseline
+        denominator = f_m - f_empty
+        if abs(denominator) > 1e-8:  # Avoid division by zero
+            faithfulness = (f_c - f_empty) / denominator
+            # Clamp faithfulness to [0, 1] range (should be in this range theoretically)
+            faithfulness = max(0.0, min(1.0, faithfulness))
         else:
             faithfulness = 0.0
             
-        # Completeness = F(C) / F(M) ? 
-        # Usually Completeness is how much of the behavior is recovered.
-        # If F(C) is close to F(M), it's complete.
-        # But F(C) is "Circuit Only".
-        # Sometimes Completeness is defined via "Knockout": F(M \ C).
-        # If F(M \ C) drops to F(Empty), then the circuit is necessary (complete?).
+        # Completeness = F(C) / F(M)
+        # Measures what fraction of the full model's behavior the circuit captures
+        # Should be <= 1.0 (circuit shouldn't exceed full model performance)
+        if abs(f_m) > 1e-8:  # Avoid division by zero
+            completeness = f_c / f_m
+            # Clamp completeness to [0, 1] range
+            # If F_C > F_M, it suggests the ablation actually increased refusal (unusual but possible)
+            # We cap it at 1.0 to indicate the circuit captures at least as much as the full model
+            completeness = min(1.0, max(0.0, completeness))
+        else:
+            completeness = 0.0
         
-        # Let's stick to the definition in feature-circuits if possible.
-        # In feature-circuits/ablation.py:
-        # Faithfulness = (fc - fempty) / (fm - fempty)
-        # They don't explicitly calculate completeness in the snippet I saw, but usually it's related.
-        # I will return the raw values and the faithfulness score.
+        print(f"  F(M)={f_m:.4f}, F(C)={f_c:.4f}, F(Empty)={f_empty:.4f}")
+        print(f"  Faithfulness={faithfulness:.4f}, Completeness={completeness:.4f}")
         
         return {
             "faithfulness": faithfulness,
+            "completeness": completeness,
             "F_M": f_m,
             "F_C": f_c,
             "F_empty": f_empty

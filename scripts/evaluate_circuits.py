@@ -158,8 +158,7 @@ def main():
                 
             metrics = evaluator.evaluate_circuit(filtered_circuit, prompts, target_outputs, mean_activations)
             results["faithfulness"].append(metrics["faithfulness"])
-            completeness = metrics["F_C"] / metrics["F_M"] if metrics["F_M"] != 0 else 0
-            results["completeness"].append(completeness)
+            results["completeness"].append(metrics["completeness"])
         
         print(f"Unique node counts across thresholds: {sorted(seen_node_counts)}")
             
