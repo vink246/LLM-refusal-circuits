@@ -5,18 +5,22 @@ model:
   device: "cuda"  # or "cpu"
   torch_dtype: "float16"  # "float16" or "float32"
   trust_remote_code: false
-  cache_dir: null  # Optional: HuggingFace cache directory (e.g., "/path/to/hf_cache" or "~/.cache/huggingface")
+  cache_dir: "/home/hice1/vkulkarni46/scratch/hf_cache"  # Optional: HuggingFace cache directory (e.g., "/path/to/hf_cache" or "~/.cache/huggingface")
   
   # Layers to collect activations from
   # Format: residuals_N, mlp_N, or attention_N where N is layer index
   activation_layers:
-    - "residuals_0"
-    - "residuals_5"
-    - "residuals_10"
-    - "residuals_15"
-    - "residuals_20"
+    - "residuals_21"
+    - "residuals_22"
+    - "residuals_23"
+    - "residuals_24"
     - "residuals_25"
+    - "residuals_26"
+    - "residuals_27"
+    - "residuals_28"
+    - "residuals_29"
     - "residuals_30"
+    - "residuals_31"
     # Add more layers as needed
 
 inference:
