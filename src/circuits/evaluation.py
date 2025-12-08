@@ -27,46 +27,73 @@ class CircuitEvaluator:
         self.config = config
         self.device = model_wrapper.config.device_map
         
-    def refusal_metric_fn(self, logits: torch.Tensor, target_ids: torch.Tensor) -> torch.Tensor:
+        self.device = model_wrapper.config.device_map
+        
+        self.refusal_indicators = [
+            "sorry", "cannot", "unable", "not allowed", "against", 
+            "policy", "inappropriate", "should not", "cannot help",
+            "I cannot", "I'm unable", "I am unable", "I'm not", "I am not", "I cannot provide",
+            "I cannot assist", "I cannot answer", "I cannot help you",
+            "I can't", "I'm not able", "I'm not able to"
+        ]
+        # Pre-compute token IDs for refusal indicators (first token of each)
+        # We do this lazily or in init? Init is better.
+        # But we need the tokenizer.
+        self.refusal_token_ids = None
+
+    def _get_refusal_token_ids(self):
+        if self.refusal_token_ids is None:
+            # Get the first token of each indicator
+            # Note: We should handle spacing. " sorry" vs "sorry".
+            # Usually the model generates a space first?
+            # Let's assume the indicators might appear at the start.
+            # We encode " " + indicator and indicator.
+            
+            ids = set()
+            for ind in self.refusal_indicators:
+                # Encode with and without leading space
+                tokens1 = self.model.tokenizer.encode(ind, add_special_tokens=False)
+                tokens2 = self.model.tokenizer.encode(" " + ind, add_special_tokens=False)
+                
+                if tokens1: ids.add(tokens1[0])
+                if tokens2: ids.add(tokens2[0])
+            
+            self.refusal_token_ids = torch.tensor(list(ids), device=self.device)
+        return self.refusal_token_ids
+
+    def refusal_metric_fn(self, logits: torch.Tensor, target_ids: torch.Tensor = None) -> torch.Tensor:
         """
         Calculate refusal score based on logits.
+        Uses the probability of refusal indicator tokens.
         
         Args:
-            logits: (batch, seq_len, vocab_size)
-            target_ids: (batch, seq_len) - not used for simple refusal probability
+            logits: (batch, seq_len, vocab_size) - we usually care about the last position
+            target_ids: Unused now
             
         Returns:
             Score tensor (batch,)
         """
-        # Simple metric: Probability of "Sorry" or similar tokens at the first position
-        # Or just use the loss on the target refusal string if provided
+        # We assume logits are for the NEXT token prediction (e.g. last position of prompt)
+        # If logits has seq_len > 1, we take the last one?
+        # Usually run_with_ablations handles extracting the relevant logits.
+        # But here logits is passed in.
         
-        # For now, let's use a simplified approach:
-        # We want to measure how much the model refuses.
-        # If we have a specific target (e.g. "I cannot"), we can measure the probability of that.
+        # If logits is (batch, vocab), use it directly.
+        # If (batch, seq, vocab), take last.
+        if logits.dim() == 3:
+            logits = logits[:, -1, :]
+            
+        refusal_ids = self._get_refusal_token_ids()
         
-        # Let's assume we are looking at the first generated token probability for refusal words.
-        # But we might not know which token is "Sorry" without the tokenizer.
+        # Calculate log probs
+        log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
         
-        # Better approach: Use the provided target_ids (which should be the refusal response)
-        # and calculate the negative log likelihood (loss) of generating that response.
-        # Higher score = higher probability of refusal = lower loss.
-        # So metric = -loss.
+        # Sum of probabilities of all refusal tokens (LogSumExp of log probs)
+        # score = log( sum( exp(log_prob[i]) ) )
+        refusal_log_probs = log_probs[:, refusal_ids]
+        score = torch.logsumexp(refusal_log_probs, dim=-1)
         
-        # logits: (batch, seq_len, vocab)
-        # target_ids: (batch, seq_len)
-        
-        # Shift logits and labels for next-token prediction
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = target_ids[..., 1:].contiguous()
-        
-        loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
-        loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-        
-        # Reshape back to (batch, seq_len-1) and sum
-        loss = loss.view(shift_labels.size(0), shift_labels.size(1)).sum(dim=1)
-        
-        return -loss  # Higher is better (more refusal)
+        return score
 
     def get_mean_ablation_values(self, activations: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """
@@ -112,13 +139,14 @@ class CircuitEvaluator:
             Average metric score
         """
         # Prepare target IDs
-        target_encodings = self.model.tokenizer(
-            target_outputs, 
-            padding=True, 
-            return_tensors="pt",
-            add_special_tokens=False
-        ).to(self.device)
-        target_ids = target_encodings.input_ids
+        # Not needed for refusal metric based on indicators, but kept for interface compatibility
+        # target_encodings = self.model.tokenizer(
+        #     target_outputs, 
+        #     padding=True, 
+        #     return_tensors="pt",
+        #     add_special_tokens=False
+        # ).to(self.device)
+        # target_ids = target_encodings.input_ids
         
         # Setup hooks
         self.model.clear_intervention_hooks()
@@ -134,9 +162,6 @@ class CircuitEvaluator:
         # Define hook function factory
         def make_hook_fn(layer_idx, important_features, mean_val):
             # Load SAE for this layer
-            # Note: This assumes we have one SAE per layer and we know which one.
-            # We might need to look up the correct SAE based on the layer name.
-            # For now, let's assume residual stream SAEs.
             sae = self.sae_manager.load_saes_for_model(self.model.config.model_name, [f"residuals_{layer_idx}"]).get(f"residuals_{layer_idx}")
             
             if sae is None:
@@ -149,60 +174,31 @@ class CircuitEvaluator:
                 feature_acts = sae.encode(activation)
                 
                 # Create mask for important features
-                # important_features is a list of indices
                 mask = torch.zeros(feature_acts.shape[-1], dtype=torch.bool, device=activation.device)
                 mask[important_features] = True
                 
                 # Determine what to ablate
                 if ablate_complement:
-                    # Ablate everything NOT in the circuit
-                    # Keep important features, replace others with mean
                     features_to_ablate = ~mask
                 else:
-                    # Ablate ONLY things in the circuit
                     features_to_ablate = mask
                 
-                # We need mean feature activations.
-                # If ablation_values provides activation means, we need to encode them to get feature means?
-                # Or does ablation_values provide feature means?
-                # The input ablation_values are raw activation means.
-                # So we should encode the mean activation to get mean feature activations?
-                # Or just use the mean of the features from the dataset?
-                # Let's assume we calculate feature means on the fly or pass them in.
-                # For simplicity, let's use ZERO ablation for features for now, or 
-                # better: encode the mean activation.
-                
+                # Use mean feature activations (encode mean activation)
                 mean_act = mean_val.to(activation.device)
                 mean_feature_acts = sae.encode(mean_act)
-                
-                # Apply ablation
-                # feature_acts[..., features_to_ablate] = mean_feature_acts[..., features_to_ablate]
-                # Broadcasting might be tricky if mean_feature_acts is (1, 1, hidden)
                 
                 # Expand mean to match batch/seq
                 target_shape = feature_acts.shape
                 expanded_mean = mean_feature_acts.expand(target_shape)
                 
-                # We can't do in-place modification easily with boolean indexing on last dim if shapes match
-                # But here we want to replace specific feature indices across all batch/seq positions.
-                
-                # Create a mask of shape (hidden,)
-                # features_to_ablate is (hidden,)
-                
-                # Apply
+                # Apply ablation
                 feature_acts_modified = feature_acts.clone()
                 feature_acts_modified[..., features_to_ablate] = expanded_mean[..., features_to_ablate]
                 
                 # Decode
                 reconstructed = sae.decode(feature_acts_modified)
                 
-                # Add error term (original - reconstructed_original) ?
-                # Faithfulness usually implies running with ONLY the circuit features.
-                # So: Output = Decode(Features * Mask) + Error?
-                # Or Output = Decode(Features * Mask + Mean * ~Mask) + Error?
-                # Usually we keep the error term unablated or zero-ablate it.
-                # feature-circuits defaults to keeping the error term.
-                
+                # Add error term (original - reconstructed_original)
                 original_reconstructed = sae.decode(feature_acts)
                 error = activation - original_reconstructed
                 
@@ -218,87 +214,24 @@ class CircuitEvaluator:
                 if hook:
                     self.model.register_intervention_hook(layer_spec, hook)
         
-        # Run inference
-        # We need to get logits. ModelWrapper.run_with_activations returns text.
-        # We need a method to get logits.
-        # I'll add a temporary method or use the model directly since I have access to it.
-        
+        # Run inference on prompts only
         inputs = self.model.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).to(self.device)
         
-        with torch.no_grad():
-            outputs = self.model.model(**inputs)
-            logits = outputs.logits
-            
-        # Calculate metric
-        # We need the target ids for the metric
-        # Assuming prompts + target_outputs are aligned
-        
-        # We need to construct the full sequence for loss calculation: Prompt + Target
-        # But here we just want to check if the model produces the target given the prompt.
-        # So inputs are prompts.
-        # Logits are for the next tokens.
-        
-        # Wait, `logits` shape is (batch, seq_len, vocab).
-        # We care about the logits for the *generated* tokens.
-        # But we didn't generate, we just ran a forward pass on the prompt.
-        # So we are predicting the *first* token of the response.
-        
-        # If we want to evaluate the full response, we need to feed (Prompt + Target) and look at loss on Target positions.
-        
-        # Let's adjust inputs to be Prompt + Target
-        full_inputs_ids = []
-        target_masks = [] # 1 for target positions, 0 for prompt
-        
-        for prompt, target in zip(prompts, target_outputs):
-            prompt_ids = self.model.tokenizer.encode(prompt, add_special_tokens=False)
-            target_ids_list = self.model.tokenizer.encode(target, add_special_tokens=False)
-            full_ids = prompt_ids + target_ids_list
-            mask = [0] * len(prompt_ids) + [1] * len(target_ids_list)
-            
-            full_inputs_ids.append(torch.tensor(full_ids))
-            target_masks.append(torch.tensor(mask))
-            
-        # Pad
-        full_inputs_padded = torch.nn.utils.rnn.pad_sequence(full_inputs_ids, batch_first=True, padding_value=self.model.tokenizer.pad_token_id).to(self.device)
-        # We need to handle masks carefully if padding exists
-        
-        # Run forward pass
-        with torch.no_grad():
-            outputs = self.model.model(input_ids=full_inputs_padded)
-            logits = outputs.logits
-            
-        # Calculate loss only on target positions
-        # This is getting complicated to implement perfectly in one go.
-        # Let's simplify: Just measure prob of first token of target.
-        
-        # Simplified approach:
-        # Just run forward on prompt.
-        # Check prob of first token of target.
-        
-        first_target_tokens = [self.model.tokenizer.encode(t, add_special_tokens=False)[0] for t in target_outputs]
-        first_target_tensor = torch.tensor(first_target_tokens, device=self.device)
-        
-        # Logits at the last position of the prompt
-        # We need to find the last position for each prompt (due to padding)
-        # But if we just ran forward on prompts, we can take the last token.
-        
-        # Let's stick to the simpler forward pass on prompts.
-        inputs = self.model.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).to(self.device)
         with torch.no_grad():
             outputs = self.model.model(**inputs)
             # logits: (batch, seq, vocab)
+            
             # We want the logits corresponding to the last token of the prompt
             # inputs.attention_mask can tell us where the last token is
-            
             last_token_idxs = inputs.attention_mask.sum(dim=1) - 1
-            # Select logits
+            
+            # Select logits at the last position
             final_logits = outputs.logits[torch.arange(outputs.logits.shape[0]), last_token_idxs, :]
             
-            # Calculate log prob of target token
-            log_probs = torch.nn.functional.log_softmax(final_logits, dim=-1)
-            target_log_probs = log_probs[torch.arange(log_probs.shape[0]), first_target_tensor]
+            # Calculate metric
+            score = self.refusal_metric_fn(final_logits)
             
-        return target_log_probs.mean().item()
+        return score.mean().item()
 
     def evaluate_circuit(
         self,

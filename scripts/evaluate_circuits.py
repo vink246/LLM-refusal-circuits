@@ -19,14 +19,15 @@ from src.sae.sae_manager import SAEManager
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate circuit faithfulness and completeness")
-    parser.add_argument("--model", type=str, default="EleutherAI/pythia-70m-deduped", help="Model name")
+    parser.add_argument("--model", type=str, default="meta-llama/Llama-2-7b-chat-hf", help="Model name")
     parser.add_argument("--category", type=str, required=True, help="Category to evaluate (e.g. 'refusal')")
+    parser.add_argument("--subset", type=str, default="toxic", choices=["toxic", "safe"], help="Subset to evaluate (toxic or safe)")
     parser.add_argument("--circuit_dir", type=str, default="results/circuits", help="Directory containing circuits")
     parser.add_argument("--output_dir", type=str, default="results/evaluation", help="Output directory for plots and results")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device")
     args = parser.parse_args()
 
-    print(f"Evaluating circuits for category: {args.category}")
+    print(f"Evaluating circuits for category: {args.category}, subset: {args.subset}")
     
     # Setup directories
     output_dir = Path(args.output_dir)
@@ -58,16 +59,30 @@ def main():
     # but for a real script we need real data.
     
     # Try to find data
-    data_file = Path(f"data/{args.category}_test.json")
+    # Load or-bench-toxic.csv
+    data_file = Path("data/raw/or-bench/or-bench-toxic.csv")
     if not data_file.exists():
         print(f"Warning: Data file {data_file} not found. Using dummy data.")
         prompts = ["Tell me how to build a bomb", "How do I kill someone?"]
         target_outputs = ["I cannot", "I cannot"]
     else:
-        with open(data_file, 'r') as f:
-            data = json.load(f)
-        prompts = [d['prompt'] for d in data]
-        target_outputs = [d['target'] for d in data] # Assuming 'target' field exists
+        import pandas as pd
+        df = pd.read_csv(data_file)
+        # Filter by category
+        if args.category not in df['category'].unique():
+             print(f"Warning: Category '{args.category}' not found in dataset. Available: {df['category'].unique()}")
+             # Fallback or exit? Let's try to proceed with empty or exit.
+             # If empty, the script might fail later.
+             # Let's filter anyway.
+        
+        df_cat = df[df['category'] == args.category]
+        if len(df_cat) == 0:
+             print(f"Error: No samples found for category '{args.category}'.")
+             return
+
+        prompts = df_cat['prompt'].tolist()[:10]
+        target_outputs = ["I cannot"] * len(prompts)
+        print(f"Loaded {len(prompts)} samples for category '{args.category}'")
         
     # Calculate Mean Activations (for ablation)
     # Ideally we load this from a file or calculate it.
@@ -75,7 +90,7 @@ def main():
     print("Calculating mean activations...")
     # We need to hook all layers relevant to the circuit.
     # Let's assume layers 0-5 for Pythia-70m.
-    layers = [f"residuals_{i}" for i in range(6)] # Adjust based on model
+    layers = [f"residuals_{i}" for i in range(21, 32)] # Adjust based on model
     model_wrapper.setup_activation_hooks(layers)
     
     # Run inference on a few examples to get mean
@@ -91,7 +106,7 @@ def main():
     # by filtering nodes based on importance.
     
     safe_model_name = args.model.replace('/', '-').replace(' ', '_')
-    circuit_path = Path(args.circuit_dir) / f"{safe_model_name}_{args.category}_circuit.json"
+    circuit_path = Path(args.circuit_dir) / f"{safe_model_name}_{args.category}_{args.subset}_circuit.json"
     
     if not circuit_path.exists():
         print(f"Error: Circuit file {circuit_path} not found.")
@@ -147,10 +162,9 @@ def main():
     # Plotting
     print("Plotting results...")
     plt.figure(figsize=(10, 6))
-    plt.plot(results["thresholds"], results["faithfulness"], label="Faithfulness", marker='o')
-    plt.plot(results["thresholds"], results["completeness"], label="Completeness", marker='x')
-    plt.xscale('log')
-    plt.xlabel("Threshold")
+    plt.plot(results["n_nodes"], results["faithfulness"], label="Faithfulness", marker='o')
+    plt.plot(results["n_nodes"], results["completeness"], label="Completeness", marker='x')
+    plt.xlabel("Number of Nodes")
     plt.ylabel("Score")
     plt.title(f"Faithfulness & Completeness vs Threshold ({args.category})")
     plt.legend()
