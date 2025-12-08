@@ -171,7 +171,7 @@ class CircuitEvaluator:
                 # activation: (batch, seq, hidden)
                 
                 # Encode
-                feature_acts = sae.encode(activation)
+                feature_acts = sae.sae.encode(activation)
                 
                 # Create mask for important features
                 mask = torch.zeros(feature_acts.shape[-1], dtype=torch.bool, device=activation.device)
@@ -185,7 +185,7 @@ class CircuitEvaluator:
                 
                 # Use mean feature activations (encode mean activation)
                 mean_act = mean_val.to(activation.device)
-                mean_feature_acts = sae.encode(mean_act)
+                mean_feature_acts = sae.sae.encode(mean_act)
                 
                 # Expand mean to match batch/seq
                 target_shape = feature_acts.shape
@@ -196,10 +196,10 @@ class CircuitEvaluator:
                 feature_acts_modified[..., features_to_ablate] = expanded_mean[..., features_to_ablate]
                 
                 # Decode
-                reconstructed = sae.decode(feature_acts_modified)
+                reconstructed = sae.sae.decode(feature_acts_modified)
                 
                 # Add error term (original - reconstructed_original)
-                original_reconstructed = sae.decode(feature_acts)
+                original_reconstructed = sae.sae.decode(feature_acts)
                 error = activation - original_reconstructed
                 
                 return reconstructed + error
