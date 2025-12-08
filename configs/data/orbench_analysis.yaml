@@ -4,7 +4,7 @@
 dataset:
   # Path to OR-Bench dataset directory
   # Should contain: or-bench-80k.csv, or-bench-hard-1k.csv, or-bench-toxic.csv
-  path: "data/raw/or-bench"
+  path: "/home/hice1/mchen692/scratch/datasets/or-bench"
   
   # Categories to analyze (leave empty to analyze all available categories)
   # If specified, only these categories will be included in analysis
