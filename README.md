@@ -70,25 +70,58 @@ python scripts/discover_circuits.py --config configs/circuits/discovery_separate
 # Step 5: Analyze circuits
 python scripts/analyze_circuits.py --config configs/circuits/discovery_separate_safe_toxic.yaml
 
-# Step 6: Generate report
+# Step 6: Evaluate circuits (faithfulness & completeness)
+python scripts/evaluate_circuits.py --model "meta-llama/Llama-2-7b-chat-hf"
+
+# Step 7: Generate report
 python scripts/generate_report.py --results-dir results/
 ```
 
 ## Workflow Scripts
 
-The analysis pipeline consists of six main scripts:
+The analysis pipeline consists of seven main scripts:
 
 1. **`analyze_data.py`** - Analyze data splits (safe/toxic/hard) and identify imbalances
 2. **`collect_activations.py`** - Run inference on models and collect activations from specified layers
 3. **`train_saes.py`** - Train sparse autoencoders on collected activations
 4. **`discover_circuits.py`** - Discover sparse feature circuits for each category
 5. **`analyze_circuits.py`** - Compare circuits across categories and generate visualizations
-6. **`generate_report.py`** - Generate comprehensive final analysis report
+6. **`evaluate_circuits.py`** - Evaluate circuit faithfulness and completeness metrics across different thresholds
+7. **`generate_report.py`** - Generate comprehensive final analysis report
 
 Each script can be run independently or as part of the complete pipeline. See individual script help for options:
 ```bash
 python scripts/<script_name>.py --help
 ```
+
+### Circuit Evaluation (`evaluate_circuits.py`)
+
+Evaluates the faithfulness and completeness of discovered circuits across different importance thresholds:
+
+- **Faithfulness**: Measures how well the circuit alone can reproduce the model's refusal behavior (F(C) - F(Empty)) / (F(M) - F(Empty))
+- **Completeness**: Measures what fraction of the full model's behavior the circuit captures (F(C) / F(M))
+
+The script:
+- Loads circuits for each category from `results/circuits/`
+- Filters circuits by importance thresholds (automatically computed from percentiles)
+- Evaluates each filtered circuit using ablation experiments
+- Generates plots showing faithfulness and completeness vs. circuit size
+- Saves metrics and statistical analysis to `results/evaluation/`
+
+**Usage:**
+```bash
+python scripts/evaluate_circuits.py \
+    --model "meta-llama/Llama-2-7b-chat-hf" \
+    --circuit_dir "results/circuits" \
+    --output_dir "results/evaluation" \
+    --device "cuda" \
+    --cache_dir "/path/to/huggingface/cache"  # Optional
+```
+
+**Outputs:**
+- `{model}_{category}_metrics.png` - Plot of faithfulness and completeness vs. number of nodes
+- `{model}_{category}_metrics.json` - Raw metrics data
+- `{model}_{category}_stats.json` - Statistical significance tests
 
 ## Configuration
 

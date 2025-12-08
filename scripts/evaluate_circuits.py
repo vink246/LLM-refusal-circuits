@@ -87,8 +87,42 @@ def main():
         print(f"Loading circuit: {circuit_path}")
         full_circuit = SparseFeatureCircuit.load_from_json(circuit_path)
         
-        # Evaluate across thresholds
-        thresholds = [0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
+        # Get importance distribution to set meaningful thresholds
+        importances = [node_data['importance'] for node_data in full_circuit.nodes.values()]
+        if not importances:
+            print(f"Warning: Circuit has no nodes. Skipping category '{category}'.")
+            continue
+            
+        importances_sorted = sorted(importances, reverse=True)
+        max_importance = max(importances)
+        min_importance = min(importances)
+        median_importance = importances_sorted[len(importances_sorted) // 2]
+        
+        print(f"Circuit importance stats: min={min_importance:.6f}, max={max_importance:.6f}, median={median_importance:.6f}, total_nodes={len(importances)}")
+        
+        # Use percentiles to ensure we get different numbers of nodes
+        # Calculate thresholds that correspond to different percentiles
+        percentiles = [99, 95, 90, 80, 70, 60, 50, 40, 30, 20, 10, 5, 1]
+        thresholds = []
+        for p in percentiles:
+            idx = int((100 - p) / 100.0 * len(importances_sorted))
+            idx = min(idx, len(importances_sorted) - 1)
+            thresholds.append(importances_sorted[idx])
+        
+        # Also add some absolute thresholds as fallback (scaled to actual range)
+        if max_importance > 0:
+            absolute_thresholds = [max_importance * f for f in [0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.3, 0.5]]
+            thresholds.extend(absolute_thresholds)
+        
+        # Remove duplicates and sort
+        thresholds = sorted(set(thresholds), reverse=True)
+        # Keep at most 15 thresholds to avoid too many evaluations
+        if len(thresholds) > 15:
+            step = len(thresholds) // 15
+            thresholds = thresholds[::step]
+        
+        print(f"Using {len(thresholds)} thresholds: {[f'{t:.6f}' for t in thresholds[:5]]}...{[f'{t:.6f}' for t in thresholds[-5:]]}")
+        
         results = {
             "thresholds": thresholds,
             "faithfulness": [],
@@ -97,6 +131,7 @@ def main():
         }
         
         print("Evaluating across thresholds...")
+        seen_node_counts = set()
         for threshold in tqdm(thresholds, desc=f"Thresholds ({category})"):
             filtered_circuit = SparseFeatureCircuit()
             for node_id, node_data in full_circuit.nodes.items():
@@ -114,6 +149,7 @@ def main():
                     
             n_nodes = len(filtered_circuit.nodes)
             results["n_nodes"].append(n_nodes)
+            seen_node_counts.add(n_nodes)
             
             if n_nodes == 0:
                 results["faithfulness"].append(0.0)
@@ -124,27 +160,47 @@ def main():
             results["faithfulness"].append(metrics["faithfulness"])
             completeness = metrics["F_C"] / metrics["F_M"] if metrics["F_M"] != 0 else 0
             results["completeness"].append(completeness)
+        
+        print(f"Unique node counts across thresholds: {sorted(seen_node_counts)}")
             
-        # Plotting
+        # Plotting - sort by number of nodes for proper curve
         print("Plotting results...")
-        plt.figure(figsize=(10, 6))
-        plt.plot(results["n_nodes"], results["faithfulness"], label="Faithfulness", marker='o')
-        plt.plot(results["n_nodes"], results["completeness"], label="Completeness", marker='x')
-        plt.xlabel("Number of Nodes")
-        plt.ylabel("Score")
-        plt.title(f"Faithfulness & Completeness vs Threshold ({category})")
-        plt.legend()
-        plt.grid(True)
+        
+        # Create tuples and sort by n_nodes
+        plot_data = list(zip(results["n_nodes"], results["faithfulness"], results["completeness"], results["thresholds"]))
+        plot_data.sort(key=lambda x: x[0])  # Sort by n_nodes
+        
+        n_nodes_sorted = [x[0] for x in plot_data]
+        faithfulness_sorted = [x[1] for x in plot_data]
+        completeness_sorted = [x[2] for x in plot_data]
+        thresholds_sorted = [x[3] for x in plot_data]
+        
+        plt.figure(figsize=(12, 6))
+        plt.plot(n_nodes_sorted, faithfulness_sorted, label="Faithfulness", marker='o', linestyle='-', linewidth=2, markersize=6)
+        plt.plot(n_nodes_sorted, completeness_sorted, label="Completeness", marker='x', linestyle='-', linewidth=2, markersize=6)
+        plt.xlabel("Number of Nodes", fontsize=12)
+        plt.ylabel("Score", fontsize=12)
+        plt.title(f"Faithfulness & Completeness vs Circuit Size ({category})", fontsize=14)
+        plt.legend(fontsize=11)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
         
         plot_path = output_dir / f"{safe_model_name}_{category}_metrics.png"
         plt.savefig(plot_path)
         plt.close() # Close plot to free memory
         print(f"Saved plot to {plot_path}")
         
-        # Save results
+        # Save results (sorted by node count)
+        results_sorted = {
+            "thresholds": thresholds_sorted,
+            "faithfulness": faithfulness_sorted,
+            "completeness": completeness_sorted,
+            "n_nodes": n_nodes_sorted,
+            "original_results": results  # Keep original for reference
+        }
         results_path = output_dir / f"{safe_model_name}_{category}_metrics.json"
         with open(results_path, 'w') as f:
-            json.dump(results, f, indent=2)
+            json.dump(results_sorted, f, indent=2)
         print(f"Saved results to {results_path}")
 
         # Statistical Tests
