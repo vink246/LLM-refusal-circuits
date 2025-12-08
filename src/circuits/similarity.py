@@ -178,8 +178,6 @@ class CircuitSimilarity:
         
         return similarity_matrix
 
-    return similarity_matrix
-
 
 def compute_random_similarity_distribution(
     circuit1: SparseFeatureCircuit,

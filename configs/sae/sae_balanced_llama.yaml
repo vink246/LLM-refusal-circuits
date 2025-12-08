@@ -3,7 +3,7 @@
 
 model:
   # Model name (required) - must match the model used for activation collection
-  name: "meta-llama/Llama-2-7b-chat-hf"  # e.g., "meta-llama/Llama-2-7b-chat-hf" or "mistralai/Mistral-7B-Instruct-v0.1"
+  name: "meta-llama/Llama-2-7b-chat-hf"
   
   # Activation layers to train SAEs for (optional - will be inferred from activation files if not provided)
   activation_layers: []  # e.g., ["residuals_0", "residuals_5", "residuals_10"]
