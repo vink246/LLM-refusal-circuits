@@ -34,6 +34,7 @@ from pathlib import Path
 import json
 import numpy as np
 import argparse
+from tqdm import tqdm
 
 # Add src to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -221,15 +222,26 @@ def main():
         
         print(f"  Computing null distribution ({n_permutations} permutations)...")
         print(f"    This may take a few minutes - progress bar will show status...")
-        print(f"    Null distribution: similarity between random circuit pairs")
+        print(f"    Null distribution: similarity(discovered_circuit, random_circuit) for many random circuits")
+        print(f"    This tests: Is discovered circuit different from what we'd expect vs random?")
         
-        # Null distribution: similarity between two random circuits (many times)
-        null_dist = compute_random_similarity_distribution(
-            rep_circuit, 
-            random_comp_circuit,  # Used only for structure, not content
-            n_permutations=n_permutations,
-            max_feature_id=sae_hidden_dim
-        )
+        # CRITICAL FIX: Null distribution should compare discovered_circuit to many random circuits
+        # NOT random_circuit1 vs random_circuit2
+        # This properly tests: "Is discovered_circuit significantly different from random?"
+        null_dist = []
+        for _ in tqdm(range(n_permutations), desc="Computing null distribution", leave=False):
+            # Create a new random circuit with same structure as rep_circuit
+            random_circuit_null = SparseFeatureCircuit()
+            for layer, count in layer_counts.items():
+                if count > 0:
+                    random_features = random.sample(range(sae_hidden_dim), count)
+                    for feat_id in random_features:
+                        random_circuit_null.add_node(str(feat_id), layer, 0, 1.0)
+            
+            # Compare discovered circuit to this random circuit
+            # This is the correct null: "What similarity do we get when comparing discovered to random?"
+            sim = compute_circuit_similarity(rep_circuit, random_circuit_null)
+            null_dist.append(sim)
         
         print(f"    Completed {len(null_dist)} permutations")
         print(f"    Null distribution mean: {np.mean(null_dist):.6f}, std: {np.std(null_dist):.6f}")
