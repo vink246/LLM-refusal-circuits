@@ -183,18 +183,24 @@ class CircuitSimilarity:
 def compute_random_similarity_distribution(
     circuit1: SparseFeatureCircuit,
     circuit2: SparseFeatureCircuit,
-    n_permutations: int = 1000
+    n_permutations: int = 1000,
+    max_feature_id: int = 8192
 ) -> List[float]:
     """
-    Compute similarity distribution for random permutations of circuit2.
+    Compute null distribution by comparing random circuits to each other.
+    
+    This creates the null distribution for testing if a discovered circuit is
+    significantly different from random. The null hypothesis is that the
+    discovered circuit is like a random circuit.
     
     Args:
-        circuit1: First circuit (fixed)
-        circuit2: Second circuit (to be permuted)
-        n_permutations: Number of random permutations (recommended: >= 1000 for reliable p-values)
+        circuit1: First circuit (used to determine structure/size)
+        circuit2: Second circuit (used to determine structure/size)
+        n_permutations: Number of random permutations (recommended: >= 1000)
+        max_feature_id: Maximum feature ID to sample from (SAE hidden_dim, default 8192)
         
     Returns:
-        List of similarity scores for random permutations
+        List of similarity scores between random circuit pairs (null distribution)
     """
     import random
     
@@ -202,32 +208,19 @@ def compute_random_similarity_distribution(
     if n_permutations <= 0:
         raise ValueError(f"n_permutations must be > 0, got {n_permutations}")
     
-    if len(circuit1.nodes) == 0 or len(circuit2.nodes) == 0:
-        # If either circuit is empty, return zeros
-        return [0.0] * n_permutations
+    if max_feature_id <= 0:
+        raise ValueError(f"max_feature_id must be > 0, got {max_feature_id}")
     
-    random_scores = []
-    
-    # Get structure of circuit2 (nodes per layer)
-    nodes2 = circuit2.get_top_nodes(100)  # Use same top-N as in similarity computation
-    if len(nodes2) == 0:
+    # Get structure from circuit1 (number of nodes per layer)
+    nodes1 = circuit1.get_top_nodes(100)  # Use same top-N as in similarity computation
+    if len(nodes1) == 0:
+        # If circuit is empty, return zeros
         return [0.0] * n_permutations
     
     layer_counts = {}
-    for node_id in nodes2:
-        layer = circuit2.nodes[node_id]['layer']
+    for node_id in nodes1:
+        layer = circuit1.nodes[node_id]['layer']
         layer_counts[layer] = layer_counts.get(layer, 0) + 1
-        
-    # We need to know the total number of features per layer to sample from.
-    # Assuming SAE size is constant or we know it.
-    # For simplicity, let's assume a large enough pool of features (e.g. SAE hidden dim).
-    # If we don't know the max feature ID, we can't sample truly random features.
-    # But we can shuffle the *existing* features in the circuit?
-    # No, that would just be the same set of features.
-    # We need to sample *random* features from the SAE space.
-    # Let's assume SAE hidden dim is 32768 (Pythia-70m) or similar.
-    # We'll use a default max_feature_id if not provided.
-    max_feature_id = 32768 
     
     # Validate that we can sample enough features
     max_count = max(layer_counts.values()) if layer_counts else 0
@@ -237,44 +230,65 @@ def compute_random_similarity_distribution(
             f"Increase max_feature_id or reduce circuit size."
         )
     
+    random_scores = []
+    
     # Use tqdm for progress indication (especially important for 1000+ iterations)
-    for _ in tqdm(range(n_permutations), desc="Computing permutations", leave=False):
-        # Create a random circuit with same structure as circuit2
-        random_circuit = SparseFeatureCircuit()
+    for _ in tqdm(range(n_permutations), desc="Computing null distribution", leave=False):
+        # Create TWO random circuits with same structure as circuit1
+        # This tests: "What is the similarity between two random circuits?"
+        # This is the null distribution for testing if discovered circuits are different from random
+        
+        random_circuit1 = SparseFeatureCircuit()
+        random_circuit2 = SparseFeatureCircuit()
         
         for layer, count in layer_counts.items():
             if count > 0:
-                # Sample 'count' random features for this layer
-                # random.sample is efficient for small counts relative to max_feature_id
-                random_features = random.sample(range(max_feature_id), count)
-                for feat_id in random_features:
-                    random_circuit.add_node(
+                # Sample 'count' random features for this layer for BOTH circuits
+                # Use different random samples for each circuit
+                random_features1 = random.sample(range(max_feature_id), count)
+                random_features2 = random.sample(range(max_feature_id), count)
+                
+                for feat_id in random_features1:
+                    random_circuit1.add_node(
                         feature_id=str(feat_id),
                         layer=layer,
-                        position=0,  # Position doesn't matter for similarity if we ignore it
+                        position=0,
+                        importance=1.0  # Dummy importance
+                    )
+                
+                for feat_id in random_features2:
+                    random_circuit2.add_node(
+                        feature_id=str(feat_id),
+                        layer=layer,
+                        position=0,
                         importance=1.0  # Dummy importance
                     )
         
-        # Compute similarity
-        score = compute_circuit_similarity(circuit1, random_circuit)
+        # Compute similarity between two random circuits
+        # This is the null distribution: similarity between random circuits
+        score = compute_circuit_similarity(random_circuit1, random_circuit2)
         random_scores.append(score)
-        
+    
     return random_scores
 
 
 def compute_significance(
     observed_score: float,
-    random_scores: List[float]
+    random_scores: List[float],
+    two_sided: bool = True
 ) -> Dict[str, float]:
     """
     Compute statistical significance of observed score vs random distribution.
     
     Uses empirical p-value from permutation test (recommended for permutation tests).
-    Also provides z-score and normal approximation p-value for reference.
+    Tests if observed score is significantly DIFFERENT from random (two-sided) or
+    significantly GREATER than random (one-sided).
     
     Args:
-        observed_score: Observed similarity score
-        random_scores: List of scores from random permutations
+        observed_score: Observed similarity score (e.g., discovered circuit vs random)
+        random_scores: List of scores from null distribution (random vs random similarities)
+        two_sided: If True, test if observed is significantly different (either direction).
+                   If False, test if observed is significantly greater than random.
         
     Returns:
         Dictionary with statistics (p_value, p_value_empirical, z_score, mean, std, ci_lower, ci_upper)
@@ -291,8 +305,8 @@ def compute_significance(
     else:
         z_score = 0.0
     
-    # Empirical p-value (RECOMMENDED for permutation tests, especially for n=1000)
-    # Formula: (count of permutations >= observed + 1) / (n_permutations + 1)
+    # Empirical p-value calculation
+    # Formula: (count of extreme values + 1) / (n_permutations + 1)
     # 
     # Why this formula:
     # 1. The +1 in numerator accounts for the observed value itself in the permutation distribution
@@ -302,21 +316,32 @@ def compute_significance(
     #    - It's exact (up to Monte Carlo error) with no distributional assumptions
     #    - Resolution is 0.001 (1/1000), which is sufficient for most applications
     #    - Normal approximation requires normality assumption which may not hold
-    #
-    # One-sided test: testing if observed > random (circuit similarity > random similarity)
-    count_extreme = sum(1 for score in random_scores if score >= observed_score)
-    p_value_empirical = (count_extreme + 1) / (n_permutations + 1)
     
-    # Normal approximation p-value (for reference/comparison only)
-    # For n=1000: Can be used but requires normality assumption
-    # - More precise p-values (continuous vs discrete)
-    # - But may be inaccurate if distribution is not normal
-    # - Empirical is generally preferred for permutation tests
-    if std > 0 and n_permutations > 100:
-        # One-sided p-value (testing if observed > random)
-        p_value_normal = 1 - stats.norm.cdf(z_score)
+    if two_sided:
+        # Two-sided test: Is observed significantly different from random (either direction)?
+        # Count how many random scores are as extreme or more extreme than observed
+        # Extreme = |score - mean| >= |observed - mean|
+        abs_deviation_observed = abs(observed_score - mean)
+        count_extreme = sum(1 for score in random_scores 
+                           if abs(score - mean) >= abs_deviation_observed)
+        p_value_empirical = (count_extreme + 1) / (n_permutations + 1)
+        
+        # Two-sided normal approximation
+        if std > 0 and n_permutations > 100:
+            p_value_normal = 2 * (1 - stats.norm.cdf(abs(z_score)))
+        else:
+            p_value_normal = p_value_empirical
     else:
-        p_value_normal = p_value_empirical  # Use empirical if normal approximation not reliable
+        # One-sided test: Is observed significantly GREATER than random?
+        # This tests if discovered circuit has MORE similarity than expected by chance
+        count_extreme = sum(1 for score in random_scores if score >= observed_score)
+        p_value_empirical = (count_extreme + 1) / (n_permutations + 1)
+        
+        # One-sided normal approximation
+        if std > 0 and n_permutations > 100:
+            p_value_normal = 1 - stats.norm.cdf(z_score)
+        else:
+            p_value_normal = p_value_empirical
     
     # Use empirical p-value as primary result (best practice for permutation tests)
     p_value = p_value_empirical
@@ -330,7 +355,7 @@ def compute_significance(
         ci_lower = mean
         ci_upper = mean
     
-    return {
+    result = {
         "observed": observed_score,
         "random_mean": mean,
         "random_std": std,
@@ -340,5 +365,14 @@ def compute_significance(
         "p_value_normal": p_value_normal,  # Normal approximation (for reference)
         "n_permutations": n_permutations,
         "ci_lower": ci_lower,
-        "ci_upper": ci_upper
+        "ci_upper": ci_upper,
+        "test_type": "two_sided" if two_sided else "one_sided"
     }
+    
+    # Add explicit two-sided/one-sided p-values for clarity
+    if two_sided:
+        result["p_value_two_sided"] = p_value
+    else:
+        result["p_value_one_sided"] = p_value
+    
+    return result

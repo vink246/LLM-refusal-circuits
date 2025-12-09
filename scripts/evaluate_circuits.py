@@ -219,8 +219,15 @@ def main():
                 
         if len(rep_circuit.nodes) > 0:
             print(f"Comparing circuit (threshold={target_threshold}) with random baseline...")
-            random_comp_circuit = SparseFeatureCircuit()
+            
+            # Get SAE hidden dimension from config or use default
+            # This should match the actual SAE that was trained
+            sae_hidden_dim = 8192  # Default for LLaMA/Mistral configs
+            # TODO: Could load from config file or SAE checkpoint if available
+            
+            # Create a single random circuit for comparison
             import random
+            random_comp_circuit = SparseFeatureCircuit()
             nodes = rep_circuit.get_top_nodes(100)
             layer_counts = {}
             for node_id in nodes:
@@ -228,7 +235,8 @@ def main():
                 layer_counts[layer] = layer_counts.get(layer, 0) + 1
             
             for layer, count in layer_counts.items():
-                random_features = random.sample(range(32768), count)
+                # Sample from actual SAE feature space (0 to sae_hidden_dim - 1)
+                random_features = random.sample(range(sae_hidden_dim), count)
                 for feat_id in random_features:
                     random_comp_circuit.add_node(str(feat_id), layer, 0, 1.0)
                     
@@ -238,19 +246,35 @@ def main():
             
             print("Computing null distribution (1000 permutations)...")
             print("  This may take a few minutes - progress bar will show status...")
+            print("  Null distribution: similarity between random circuit pairs")
             # Use at least 1000 permutations for reliable p-values
             # More permutations = better power and more accurate p-values
             # Progress bar will show during computation
-            null_dist = compute_random_similarity_distribution(rep_circuit, random_comp_circuit, n_permutations=1000)
+            # Null distribution: similarity between two random circuits (many times)
+            null_dist = compute_random_similarity_distribution(
+                rep_circuit, 
+                random_comp_circuit,  # Used only for structure, not content
+                n_permutations=1000,
+                max_feature_id=sae_hidden_dim
+            )
             print(f"  Completed {len(null_dist)} permutations")
+            print(f"  Null distribution mean: {np.mean(null_dist):.6f}, std: {np.std(null_dist):.6f}")
             
-            stats = compute_significance(observed_sim, null_dist)
+            # Use two-sided test: Is discovered circuit significantly DIFFERENT from random?
+            stats = compute_significance(observed_sim, null_dist, two_sided=True)
             print("Statistical Results:")
-            print(f"  Mean (Random): {stats['random_mean']:.4f}")
-            print(f"  Std (Random): {stats['random_std']:.4f}")
+            print(f"  Observed Similarity: {stats['observed']:.6f}")
+            print(f"  Null Distribution Mean: {stats['random_mean']:.6f}")
+            print(f"  Null Distribution Std: {stats['random_std']:.6f}")
             print(f"  Z-Score: {stats['z_score']:.4f}")
-            print(f"  P-Value: {stats['p_value']:.4f}")
-            print(f"  95% CI: [{stats['ci_lower']:.4f}, {stats['ci_upper']:.4f}]")
+            print(f"  P-Value (Two-Sided): {stats['p_value']:.6f}")
+            if stats.get('p_value_normal') is not None:
+                print(f"  P-Value (Normal Approx): {stats['p_value_normal']:.6f}")
+            print(f"  95% CI (Null Distribution): [{stats['ci_lower']:.6f}, {stats['ci_upper']:.6f}]")
+            if stats['p_value'] < 0.05:
+                print(f"  ✓ Significant (p < 0.05): Circuit is significantly different from random")
+            else:
+                print(f"  ✗ Not Significant (p ≥ 0.05): Cannot reject null hypothesis")
             
             stats_path = output_dir / f"{safe_model_name}_{category}_stats.json"
             with open(stats_path, 'w') as f:
