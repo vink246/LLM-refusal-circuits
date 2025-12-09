@@ -127,10 +127,12 @@ def main():
         print(f"  Make sure circuits were discovered with separate_safe_toxic=True")
         return
     
-    # Hardcoded values to match evaluate_circuits.py
-    target_threshold = 0.05
+    # Hardcoded values
+    # Using lower threshold (0.001) to retain more nodes and increase statistical power
+    # Increased permutations (5000) for better p-value resolution and statistical power
+    target_threshold = 0.001
     sae_hidden_dim = 8192  # Default for LLaMA/Mistral configs
-    n_permutations = 1000
+    n_permutations = 5000  # Increased from 1000 for better resolution and power
     
     print(f"\n{'='*80}")
     print(f"Computing Statistical Tests for TOXIC Circuits")
@@ -172,11 +174,20 @@ def main():
             print(f"Warning: Circuit has no nodes. Skipping category '{category}'.")
             continue
         
-        print(f"Circuit info: {len(importances)} nodes, "
-              f"importance range: [{min(importances):.6f}, {max(importances):.6f}]")
+        importances_sorted = sorted(importances, reverse=True)
+        max_importance = max(importances)
+        min_importance = min(importances)
+        median_importance = importances_sorted[len(importances_sorted) // 2]
+        p95_importance = importances_sorted[int(0.05 * len(importances_sorted))]
+        p99_importance = importances_sorted[int(0.01 * len(importances_sorted))]
+        
+        print(f"Circuit info: {len(importances)} nodes")
+        print(f"  Importance range: [{min_importance:.6f}, {max_importance:.6f}]")
+        print(f"  Median: {median_importance:.6f}, 95th percentile: {p95_importance:.6f}, 99th percentile: {p99_importance:.6f}")
         
         # Filter circuit by threshold (hardcoded to match evaluate_circuits.py)
         rep_circuit = SparseFeatureCircuit()
+        nodes_above_threshold = 0
         for node_id, node_data in full_circuit.nodes.items():
             if node_data['importance'] >= target_threshold:
                 rep_circuit.add_node(
@@ -185,6 +196,7 @@ def main():
                     position=node_data['position'],
                     importance=node_data['importance']
                 )
+                nodes_above_threshold += 1
         
         # Add edges for filtered nodes
         for (src, tgt), edge_data in full_circuit.edges.items():
@@ -192,10 +204,17 @@ def main():
                 rep_circuit.add_edge(src, tgt, edge_data['importance'])
         
         if len(rep_circuit.nodes) == 0:
-            print(f"Warning: Circuit is empty at threshold {target_threshold}. Skipping stats.")
+            print(f"Warning: Circuit is empty at threshold {target_threshold}.")
+            print(f"  Consider using a lower threshold. Suggested: {p99_importance:.6f} (99th percentile) or {median_importance:.6f} (median)")
             continue
         
         print(f"Filtered circuit: {len(rep_circuit.nodes)} nodes (threshold >= {target_threshold})")
+        print(f"  Retained {100.0 * len(rep_circuit.nodes) / len(importances):.1f}% of nodes")
+        
+        # Warn if too many nodes filtered
+        if len(rep_circuit.nodes) < len(importances) * 0.1:
+            print(f"  ⚠️  WARNING: Threshold may be too high - only {len(rep_circuit.nodes)}/{len(importances)} nodes retained")
+            print(f"     Consider lowering threshold to {p95_importance:.6f} (95th percentile) or {median_importance:.6f} (median)")
         
         # Statistical Tests
         print("Running Statistical Tests...")
@@ -244,7 +263,16 @@ def main():
             null_dist.append(sim)
         
         print(f"    Completed {len(null_dist)} permutations")
-        print(f"    Null distribution mean: {np.mean(null_dist):.6f}, std: {np.std(null_dist):.6f}")
+        null_mean = np.mean(null_dist)
+        null_std = np.std(null_dist)
+        null_min = np.min(null_dist)
+        null_max = np.max(null_dist)
+        print(f"    Null distribution: mean={null_mean:.6f}, std={null_std:.6f}, range=[{null_min:.6f}, {null_max:.6f}]")
+        
+        # Diagnostic: Check if observed is in the null distribution
+        if abs(observed_sim - null_mean) < null_std:
+            print(f"    ⚠️  WARNING: Observed ({observed_sim:.6f}) is within 1 std of null mean ({null_mean:.6f})")
+            print(f"       This suggests the circuit may not be significantly different from random")
         
         # Use two-sided test: Is discovered circuit significantly DIFFERENT from random?
         stats = compute_significance(observed_sim, null_dist, two_sided=True)
