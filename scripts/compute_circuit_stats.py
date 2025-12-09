@@ -130,7 +130,7 @@ def main():
     # Hardcoded values
     # Using lower threshold (0.001) to retain more nodes and increase statistical power
     # Increased permutations (5000) for better p-value resolution and statistical power
-    target_threshold = 0.001
+    target_threshold = 0.0001
     sae_hidden_dim = 8192  # Default for LLaMA/Mistral configs
     n_permutations = 5000  # Increased from 1000 for better resolution and power
     
