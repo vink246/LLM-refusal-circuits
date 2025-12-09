@@ -73,7 +73,7 @@ def main():
     parser.add_argument(
         "--output_dir", 
         type=str, 
-        default="results/evaluation", 
+        default="results/evaluation_stats", 
         help="Output directory for stats JSON files (default: results/evaluation)"
     )
     parser.add_argument(
