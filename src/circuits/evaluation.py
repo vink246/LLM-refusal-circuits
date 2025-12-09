@@ -282,6 +282,10 @@ class CircuitEvaluator:
         """
         Evaluate circuit faithfulness and completeness.
         
+        Following the paper's definitions:
+        - Faithfulness: How well the circuit alone can reproduce model behavior
+        - Completeness: How much behavior remains after removing the circuit
+        
         Args:
             circuit: The circuit to evaluate
             prompts: List of prompts
@@ -289,7 +293,7 @@ class CircuitEvaluator:
             mean_activations: Mean activations for ablation
             
         Returns:
-            Dictionary with 'faithfulness', 'completeness', 'F_M', 'F_C', 'F_empty'
+            Dictionary with 'faithfulness', 'completeness', 'F_M', 'F_C', 'F_M_minus_C', 'F_empty'
         """
         print("Evaluating circuit...")
         
@@ -306,7 +310,13 @@ class CircuitEvaluator:
         print("  Computing F(C)...")
         f_c = self.run_with_ablations(prompts, target_outputs, circuit, mean_activations, ablate_complement=True)
         
-        # 3. Compute F(Empty) - Empty Circuit Performance (Random/Mean)
+        # 3. Compute F(M\C) - Model with Circuit Removed (Completeness/Knockout)
+        # Ablate ONLY the circuit nodes (replace with mean)
+        # This measures how much behavior remains after removing the circuit
+        print("  Computing F(M\\C)...")
+        f_m_minus_c = self.run_with_ablations(prompts, target_outputs, circuit, mean_activations, ablate_complement=False)
+        
+        # 4. Compute F(Empty) - Empty Circuit Performance (Random/Mean)
         # Ablate everything in all layers (replace with mean)
         # This is the baseline when no circuit features are active
         # With empty circuit and ablate_complement=True, all layers get hooks and all features are ablated
@@ -316,6 +326,8 @@ class CircuitEvaluator:
         # Calculate metrics
         # Faithfulness = (F(C) - F(Empty)) / (F(M) - F(Empty))
         # Measures how well the circuit alone can reproduce model behavior relative to baseline
+        # Normalized version accounts for baseline performance (F(Empty))
+        # Alternative simpler definition: Faithfulness = F(C) / F(M) (without normalization)
         denominator = f_m - f_empty
         if abs(denominator) > 1e-8:  # Avoid division by zero
             faithfulness = (f_c - f_empty) / denominator
@@ -324,19 +336,20 @@ class CircuitEvaluator:
         else:
             faithfulness = 0.0
             
-        # Completeness = F(C) / F(M)
-        # Measures what fraction of the full model's behavior the circuit captures
-        # Should be <= 1.0 (circuit shouldn't exceed full model performance)
+        # Completeness = F(M\C) / F(M)
+        # Measures how much behavior remains after removing the circuit
+        # Lower values indicate the circuit is more necessary (perfect circuit -> 0)
+        # Higher values indicate the circuit is less necessary (irrelevant circuit -> 1)
         if abs(f_m) > 1e-8:  # Avoid division by zero
-            completeness = f_c / f_m
+            completeness = f_m_minus_c / f_m
             # Clamp completeness to [0, 1] range
-            # If F_C > F_M, it suggests the ablation actually increased refusal (unusual but possible)
-            # We cap it at 1.0 to indicate the circuit captures at least as much as the full model
+            # If F_M_minus_C > F_M, it suggests removing the circuit increased behavior (unusual)
+            # We cap it at 1.0 to indicate removing the circuit has no effect
             completeness = min(1.0, max(0.0, completeness))
         else:
             completeness = 0.0
         
-        print(f"  F(M)={f_m:.4f}, F(C)={f_c:.4f}, F(Empty)={f_empty:.4f}")
+        print(f"  F(M)={f_m:.4f}, F(C)={f_c:.4f}, F(M\\C)={f_m_minus_c:.4f}, F(Empty)={f_empty:.4f}")
         print(f"  Faithfulness={faithfulness:.4f}, Completeness={completeness:.4f}")
         
         return {
@@ -344,5 +357,6 @@ class CircuitEvaluator:
             "completeness": completeness,
             "F_M": f_m,
             "F_C": f_c,
+            "F_M_minus_C": f_m_minus_c,
             "F_empty": f_empty
         }
