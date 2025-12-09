@@ -5,7 +5,7 @@ model:
   device: "cuda"  # or "cpu"
   torch_dtype: "float16"  # "float16" or "float32"
   trust_remote_code: false
-  cache_dir: "/home/hice1/mchen692/scratch/huggingface"  # Optional: HuggingFace cache directory (e.g., "/path/to/hf_cache" or "~/.cache/huggingface")
+  cache_dir: "/home/hice1/<gatech username>/scratch/huggingface"  # Optional: HuggingFace cache directory (e.g., "/path/to/hf_cache" or "~/.cache/huggingface")
   
   # Layers to collect activations from
   # Format: residuals_N, mlp_N, or attention_N where N is layer index
