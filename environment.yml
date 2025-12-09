@@ -165,4 +165,4 @@ dependencies:
       - urllib3==2.5.0
       - xxhash==3.6.0
       - yarl==1.22.0
-prefix: /home/hice1/mchen692/scratch/envs/llm_refusal_env
+prefix: /home/hice1/<gatech username>/scratch/envs/llm_refusal_env
