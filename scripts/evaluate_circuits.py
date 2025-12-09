@@ -23,7 +23,7 @@ def main():
     parser.add_argument("--circuit_dir", type=str, default="results/circuits", help="Directory containing circuits")
     parser.add_argument("--output_dir", type=str, default="results/evaluation", help="Output directory for plots and results")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device")
-    parser.add_argument("--cache_dir", type=str, default=None, help="HuggingFace cache directory")
+    parser.add_argument("--cache_dir", type=str, default="/home/hice1/mchen692/scratch/huggingface", help="HuggingFace cache directory")
     args = parser.parse_args()
 
     # Setup directories

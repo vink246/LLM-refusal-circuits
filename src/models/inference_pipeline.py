@@ -68,7 +68,7 @@ class InferencePipeline:
         self.device = config.get('model', {}).get('device', 'cuda')
         self.torch_dtype = config.get('model', {}).get('torch_dtype', 'float16')
         self.trust_remote_code = config.get('model', {}).get('trust_remote_code', False)
-        self.cache_dir = config.get('model', {}).get('cache_dir', None)
+        self.cache_dir = config.get('model', {}).get('cache_dir', "/home/hice1/mchen692/scratch/huggingface")
         
     def load_model(self):
         """Load model with activation hooks"""
