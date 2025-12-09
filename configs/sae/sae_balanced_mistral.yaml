@@ -1,0 +1,45 @@
+# SAE Training Configuration
+# Single SAE trained on ALL data for comparability
+
+model:
+  # Model name (required) - must match the model used for activation collection
+  name: "mistralai/Mistral-7B-Instruct-v0.1"
+  
+  # Activation layers to train SAEs for (optional - will be inferred from activation files if not provided)
+  activation_layers: []  # e.g., ["residuals_0", "residuals_5", "residuals_10"]
+
+data:
+  # Categories to use (optional - will be inferred from activation files if not provided)
+  categories: []  # e.g., ["violence", "deception"] or empty list for all
+
+sae:
+  # SAE architecture
+  hidden_dim: 8192  # 8x expansion factor
+  sparsity_coeff: 0.01
+  k_percent: 0.05  # 5% sparsity (guaranteed top-k)
+  
+training:
+  epochs: 100
+  batch_size: 512
+  max_samples: 100000  # Maximum samples to use for training
+  
+  # CRITICAL: Balance safe/toxic during training
+  balance_safe_toxic: true
+  
+  # Handle category imbalance
+  use_category_weights: true  # Weight categories inversely to frequency
+  
+  # Learning rate
+  learning_rate: 1e-3
+
+# IMPORTANT: This trains a SINGLE SAE on ALL data
+# - All categories (safe + toxic)
+# - Ensures feature space comparability
+# - Safe and toxic circuits use same features
+
+output:
+  save_dir: "results/saes"
+  
+  # Save training history
+  save_history: true
+

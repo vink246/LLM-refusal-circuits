@@ -143,7 +143,7 @@ def main():
         # Generate visualizations
         if not args.no_visualizations:
             print("\nGenerating visualizations...")
-            viz_dir = Path(config['output'].get('visualizations_dir', 'results/visualizations'))
+            viz_dir = Path(config['output'].get('visualizations_dir', 'results/visualizations')).joinpath(config['model'].get('name', 'model').replace('/', '-').replace(' ', '_'))
             viz_dir.mkdir(parents=True, exist_ok=True)
             
             # Create safe and toxic heatmaps (category-to-category)
@@ -188,7 +188,7 @@ def main():
         }
         
         # Save analysis results
-        output_dir = Path(config['output'].get('reports_dir', 'results/reports'))
+        output_dir = Path(config['output'].get('reports_dir', 'results/reports')).joinpath(config['model'].get('name', 'model').replace('/', '-').replace(' ', '_'))
         output_dir.mkdir(parents=True, exist_ok=True)
         
         with open(output_dir / 'modularity_analysis.json', 'w') as f:
@@ -204,7 +204,7 @@ def main():
         print(f"    - Low similarity (<0.5) = Modular (category-specific circuits)")
         print(f"  Results saved to: {output_dir}")
         if not args.no_visualizations:
-            print(f"  Visualizations saved to: {config['output'].get('visualizations_dir', 'results/visualizations')}")
+            print(f"  Visualizations saved to: {config['output'].get('visualizations_dir', 'results/visualizations')+' '+config['model'].get('name', 'model').replace('/', '-').replace(' ', '_')}")
     else:
         # Combined circuits
         if equalize:
@@ -227,13 +227,13 @@ def main():
         # Generate visualizations
         if not args.no_visualizations:
             print("\nGenerating visualizations...")
-            viz_dir = Path(config['output'].get('visualizations_dir', 'results/visualizations'))
+            viz_dir = Path(config['output'].get('visualizations_dir', 'results/visualizations')).joinpath(config['model'].get('name', 'model').replace('/', '-').replace(' ', '_'))
             viz_dir.mkdir(parents=True, exist_ok=True)
-            
+
             create_similarity_heatmap(circuits, viz_dir, "Circuit Similarity Across Categories")
         
         # Save analysis results
-        output_dir = Path(config['output'].get('reports_dir', 'results/reports'))
+        output_dir = Path(config['output'].get('reports_dir', 'results/reports')).joinpath(config['model'].get('name', 'model').replace('/', '-').replace(' ', '_'))
         output_dir.mkdir(parents=True, exist_ok=True)
         
         with open(output_dir / 'modularity_analysis.json', 'w') as f:
@@ -247,7 +247,7 @@ def main():
         print(f"    - Low similarity (<0.5) = Modular (category-specific circuits)")
         print(f"  Results saved to: {output_dir}")
         if not args.no_visualizations:
-            print(f"  Visualizations saved to: {config['output'].get('visualizations_dir', 'results/visualizations')}")
+            print(f"  Visualizations saved to: {config['output'].get('visualizations_dir', 'results/visualizations')+' '+config['model'].get('name', 'model').replace('/', '-').replace(' ', '_')}")
 
 
 if __name__ == "__main__":

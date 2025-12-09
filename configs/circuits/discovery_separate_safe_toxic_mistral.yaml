@@ -1,0 +1,49 @@
+# Circuit Discovery Configuration
+# Separate safe and toxic circuits with equalization for fair comparison
+
+model:
+  # Model name (required) - must match the model used for activation collection
+  name: "mistralai/Mistral-7B-Instruct-v0.1"
+
+circuit:
+  # Circuit discovery thresholds
+  # Start with lower values if no circuits found, then increase to filter noise
+  node_threshold: 0.05  # Correlation threshold for important features (used when labels have variance)
+  edge_threshold: 0.005  # Correlation threshold for edges (0.001-0.05 recommended)
+  
+  # Top-N features per layer (used when labels have no variance - magnitude-based discovery)
+  top_n_per_layer: 100  # Number of top features to select per layer (50-200 recommended)
+  
+  # Aggregation method
+  aggregation_method: "mean"  # "mean" (recommended), "max", or "none" (uses last token)
+  
+  # Attribution method
+  attribution_method: "stats"  # "stats", "ig", "atp"
+
+discovery:
+  # Discover separate circuits for safe and toxic
+  separate_safe_toxic: true
+  
+  # Categories to discover circuits for
+  categories: []  # Empty = all available
+
+analysis:
+  # Equalize circuits before comparison (recommended)
+  equalize_circuits: true
+  
+  # Compare circuits across categories
+  compare_categories: true
+  
+  # Generate visualizations
+  generate_visualizations: true
+
+# Stage 2: Circuit Comparison
+# - Circuits are equalized to minimum size for fair comparison
+# - Uses top-N features from each circuit
+# - Ensures fair comparison despite category imbalance
+
+output:
+  circuits_dir: "results/circuits"
+  visualizations_dir: "results/visualizations"
+  reports_dir: "results/reports"
+

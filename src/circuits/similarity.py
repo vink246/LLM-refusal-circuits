@@ -5,6 +5,7 @@ Circuit similarity computation with equalization for fair comparison.
 from typing import Dict, List, Tuple, Optional
 from .circuit import SparseFeatureCircuit
 import numpy as np
+from tqdm import tqdm
 
 
 def equalize_circuits(
@@ -178,3 +179,200 @@ class CircuitSimilarity:
         
         return similarity_matrix
 
+
+def compute_random_similarity_distribution(
+    circuit1: SparseFeatureCircuit,
+    circuit2: SparseFeatureCircuit,
+    n_permutations: int = 1000,
+    max_feature_id: int = 8192
+) -> List[float]:
+    """
+    Compute null distribution by comparing random circuits to each other.
+    
+    This creates the null distribution for testing if a discovered circuit is
+    significantly different from random. The null hypothesis is that the
+    discovered circuit is like a random circuit.
+    
+    Args:
+        circuit1: First circuit (used to determine structure/size)
+        circuit2: Second circuit (used to determine structure/size)
+        n_permutations: Number of random permutations (recommended: >= 1000)
+        max_feature_id: Maximum feature ID to sample from (SAE hidden_dim, default 8192)
+        
+    Returns:
+        List of similarity scores between random circuit pairs (null distribution)
+    """
+    import random
+    
+    # Validate inputs
+    if n_permutations <= 0:
+        raise ValueError(f"n_permutations must be > 0, got {n_permutations}")
+    
+    if max_feature_id <= 0:
+        raise ValueError(f"max_feature_id must be > 0, got {max_feature_id}")
+    
+    # Get structure from circuit1 (number of nodes per layer)
+    nodes1 = circuit1.get_top_nodes(100)  # Use same top-N as in similarity computation
+    if len(nodes1) == 0:
+        # If circuit is empty, return zeros
+        return [0.0] * n_permutations
+    
+    layer_counts = {}
+    for node_id in nodes1:
+        layer = circuit1.nodes[node_id]['layer']
+        layer_counts[layer] = layer_counts.get(layer, 0) + 1
+    
+    # Validate that we can sample enough features
+    max_count = max(layer_counts.values()) if layer_counts else 0
+    if max_count > max_feature_id:
+        raise ValueError(
+            f"Cannot sample {max_count} features from pool of size {max_feature_id}. "
+            f"Increase max_feature_id or reduce circuit size."
+        )
+    
+    random_scores = []
+    
+    # Use tqdm for progress indication (especially important for 1000+ iterations)
+    for _ in tqdm(range(n_permutations), desc="Computing null distribution", leave=False):
+        # Create TWO random circuits with same structure as circuit1
+        # This tests: "What is the similarity between two random circuits?"
+        # This is the null distribution for testing if discovered circuits are different from random
+        
+        random_circuit1 = SparseFeatureCircuit()
+        random_circuit2 = SparseFeatureCircuit()
+        
+        for layer, count in layer_counts.items():
+            if count > 0:
+                # Sample 'count' random features for this layer for BOTH circuits
+                # Use different random samples for each circuit
+                random_features1 = random.sample(range(max_feature_id), count)
+                random_features2 = random.sample(range(max_feature_id), count)
+                
+                for feat_id in random_features1:
+                    random_circuit1.add_node(
+                        feature_id=str(feat_id),
+                        layer=layer,
+                        position=0,
+                        importance=1.0  # Dummy importance
+                    )
+                
+                for feat_id in random_features2:
+                    random_circuit2.add_node(
+                        feature_id=str(feat_id),
+                        layer=layer,
+                        position=0,
+                        importance=1.0  # Dummy importance
+                    )
+        
+        # Compute similarity between two random circuits
+        # This is the null distribution: similarity between random circuits
+        score = compute_circuit_similarity(random_circuit1, random_circuit2)
+        random_scores.append(score)
+    
+    return random_scores
+
+
+def compute_significance(
+    observed_score: float,
+    random_scores: List[float],
+    two_sided: bool = True
+) -> Dict[str, float]:
+    """
+    Compute statistical significance of observed score vs random distribution.
+    
+    Uses empirical p-value from permutation test (recommended for permutation tests).
+    Tests if observed score is significantly DIFFERENT from random (two-sided) or
+    significantly GREATER than random (one-sided).
+    
+    Args:
+        observed_score: Observed similarity score (e.g., discovered circuit vs random)
+        random_scores: List of scores from null distribution (random vs random similarities)
+        two_sided: If True, test if observed is significantly different (either direction).
+                   If False, test if observed is significantly greater than random.
+        
+    Returns:
+        Dictionary with statistics (p_value, p_value_empirical, z_score, mean, std, ci_lower, ci_upper)
+    """
+    from scipy import stats
+    
+    mean = np.mean(random_scores)
+    std = np.std(random_scores)
+    n_permutations = len(random_scores)
+    
+    # Calculate z-score for reference
+    if std > 0:
+        z_score = (observed_score - mean) / std
+    else:
+        z_score = 0.0
+    
+    # Empirical p-value calculation
+    # Formula: (count of extreme values + 1) / (n_permutations + 1)
+    # 
+    # Why this formula:
+    # 1. The +1 in numerator accounts for the observed value itself in the permutation distribution
+    # 2. The +1 in denominator ensures p-value is never exactly 0 and provides unbiased estimate
+    # 3. This is the standard approach for permutation tests (see Phipson & Smyth, 2010)
+    # 4. For n=1000: Empirical is preferred because:
+    #    - It's exact (up to Monte Carlo error) with no distributional assumptions
+    #    - Resolution is 0.001 (1/1000), which is sufficient for most applications
+    #    - Normal approximation requires normality assumption which may not hold
+    
+    if two_sided:
+        # Two-sided test: Is observed significantly different from random (either direction)?
+        # Count how many random scores are as extreme or more extreme than observed
+        # Extreme = |score - mean| >= |observed - mean|
+        abs_deviation_observed = abs(observed_score - mean)
+        count_extreme = sum(1 for score in random_scores 
+                           if abs(score - mean) >= abs_deviation_observed)
+        p_value_empirical = (count_extreme + 1) / (n_permutations + 1)
+        
+        # Two-sided normal approximation
+        if std > 0 and n_permutations > 100:
+            p_value_normal = 2 * (1 - stats.norm.cdf(abs(z_score)))
+        else:
+            p_value_normal = p_value_empirical
+    else:
+        # One-sided test: Is observed significantly GREATER than random?
+        # This tests if discovered circuit has MORE similarity than expected by chance
+        count_extreme = sum(1 for score in random_scores if score >= observed_score)
+        p_value_empirical = (count_extreme + 1) / (n_permutations + 1)
+        
+        # One-sided normal approximation
+        if std > 0 and n_permutations > 100:
+            p_value_normal = 1 - stats.norm.cdf(z_score)
+        else:
+            p_value_normal = p_value_empirical
+    
+    # Use empirical p-value as primary result (best practice for permutation tests)
+    p_value = p_value_empirical
+        
+    # 95% Confidence Interval for the random distribution
+    # (Not for the observed score, but for the null hypothesis)
+    if std > 0:
+        ci_lower = mean - 1.96 * std
+        ci_upper = mean + 1.96 * std
+    else:
+        ci_lower = mean
+        ci_upper = mean
+    
+    result = {
+        "observed": observed_score,
+        "random_mean": mean,
+        "random_std": std,
+        "z_score": z_score,
+        "p_value": p_value,  # Empirical p-value (primary)
+        "p_value_empirical": p_value_empirical,  # Explicit empirical
+        "p_value_normal": p_value_normal,  # Normal approximation (for reference)
+        "n_permutations": n_permutations,
+        "ci_lower": ci_lower,
+        "ci_upper": ci_upper,
+        "test_type": "two_sided" if two_sided else "one_sided"
+    }
+    
+    # Add explicit two-sided/one-sided p-values for clarity
+    if two_sided:
+        result["p_value_two_sided"] = p_value
+    else:
+        result["p_value_one_sided"] = p_value
+    
+    return result

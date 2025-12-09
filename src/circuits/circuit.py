@@ -72,3 +72,44 @@ class SparseFeatureCircuit:
             reverse=True
         )[:n]
 
+    @staticmethod
+    def load_from_json(filepath: str) -> 'SparseFeatureCircuit':
+        """Load a circuit from JSON file"""
+        import json
+        from pathlib import Path
+        
+        with open(filepath, 'r') as f:
+            circuit_data = json.load(f)
+        
+        circuit = SparseFeatureCircuit()
+        
+        # Load nodes
+        for node_id, node_info in circuit_data['nodes'].items():
+            circuit.add_node(
+                feature_id=node_info['feature_id'],
+                layer=node_info['layer'],
+                position=node_info['position'],
+                importance=node_info['importance'],
+                feature_type=node_info.get('type', 'sae_feature')
+            )
+        
+        # Load edges
+        for edge_key, edge_info in circuit_data['edges'].items():
+            # Edge key format: "source_target" or we can use the stored source/target
+            if 'source' in edge_info and 'target' in edge_info:
+                src = edge_info['source']
+                tgt = edge_info['target']
+            else:
+                # Fallback: try to split the key
+                parts = edge_key.split('_', 1)
+                if len(parts) == 2:
+                    src, tgt = parts
+                else:
+                    continue
+            
+            # Find matching node IDs (exact match or check if they exist)
+            if src in circuit.nodes and tgt in circuit.nodes:
+                circuit.add_edge(src, tgt, edge_info['importance'])
+        
+        return circuit
+

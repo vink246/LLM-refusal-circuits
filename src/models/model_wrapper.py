@@ -17,7 +17,7 @@ class ModelConfig:
     torch_dtype: str = "float16"
     device_map: str = "auto"
     trust_remote_code: bool = False
-    cache_dir: Optional[str] = None
+    cache_dir: Optional[str] = "/home/hice1/mchen692/scratch/huggingface"
 
 
 class ModelWrapper:
@@ -29,6 +29,7 @@ class ModelWrapper:
         self.tokenizer = None
         self.hooks = []
         self.activations = defaultdict(dict)
+        self.intervention_fns = {}
         
     def load_model(self):
         """Load the model and tokenizer"""
@@ -104,44 +105,104 @@ class ModelWrapper:
             else:
                 print(f"Warning: Unknown layer specification: {layer_spec}")
     
+    def register_intervention_hook(self, layer_spec: str, hook_fn):
+        """
+        Register an intervention hook for a specific layer.
+        
+        Args:
+            layer_spec: Layer specification (e.g., 'residuals_5')
+            hook_fn: Function that takes (activation, hook_name) and returns modified activation
+        """
+        self.intervention_fns[layer_spec] = hook_fn
+
+    def clear_intervention_hooks(self):
+        """Clear all intervention hooks"""
+        self.intervention_fns.clear()
+
     def _hook_residual_layer(self, layer_idx: int):
         """Hook residual stream at specified layer"""
         layer_module = self.model.model.layers[layer_idx]
+        hook_name = f'residuals_{layer_idx}'
         
-        def make_residual_hook(l_idx):
+        def make_residual_hook(name):
             def residual_hook(module, input, output):
-                if len(input) > 0:
-                    # Store activation (detach and move to CPU to save memory)
-                    self.activations[f'residuals_{l_idx}'] = input[0].detach().cpu()
+                # Input is a tuple (hidden_states, ...), we want hidden_states
+                # Output is a tuple (hidden_states, ...), we want to modify hidden_states
+                
+                # Capture activation
+                if isinstance(output, tuple):
+                    activation = output[0]
+                else:
+                    activation = output
+                
+                # Store for analysis
+                self.activations[name] = activation.detach().cpu()
+                
+                # Apply intervention if exists
+                if name in self.intervention_fns:
+                    modified_activation = self.intervention_fns[name](activation, name)
+                    
+                    # Return modified output
+                    if isinstance(output, tuple):
+                        return (modified_activation,) + output[1:]
+                    else:
+                        return modified_activation
+                
             return residual_hook
         
-        self.hooks.append(layer_module.register_forward_hook(make_residual_hook(layer_idx)))
+        self.hooks.append(layer_module.register_forward_hook(make_residual_hook(hook_name)))
     
     def _hook_mlp_layer(self, layer_idx: int):
         """Hook MLP output at specified layer"""
         mlp_layer = self.model.model.layers[layer_idx].mlp
+        hook_name = f'mlp_{layer_idx}'
         
-        def make_mlp_hook(l_idx):
+        def make_mlp_hook(name):
             def mlp_hook(module, input, output):
-                self.activations[f'mlp_{l_idx}'] = output.detach().cpu()
+                # Capture activation
+                activation = output
+                
+                # Store for analysis
+                self.activations[name] = activation.detach().cpu()
+                
+                # Apply intervention if exists
+                if name in self.intervention_fns:
+                    modified_activation = self.intervention_fns[name](activation, name)
+                    return modified_activation
+                    
             return mlp_hook
         
-        self.hooks.append(mlp_layer.register_forward_hook(make_mlp_hook(layer_idx)))
+        self.hooks.append(mlp_layer.register_forward_hook(make_mlp_hook(hook_name)))
     
     def _hook_attention_layer(self, layer_idx: int):
         """Hook attention output at specified layer"""
         attention_layer = self.model.model.layers[layer_idx].self_attn
+        hook_name = f'attention_{layer_idx}'
         
-        def make_attention_hook(l_idx):
+        def make_attention_hook(name):
             def attention_hook(module, input, output):
                 # Attention output is typically a tuple, we want the first element
                 if isinstance(output, tuple):
-                    self.activations[f'attention_{l_idx}'] = output[0].detach().cpu()
+                    activation = output[0]
                 else:
-                    self.activations[f'attention_{l_idx}'] = output.detach().cpu()
+                    activation = output
+                    
+                # Store for analysis
+                self.activations[name] = activation.detach().cpu()
+                
+                # Apply intervention if exists
+                if name in self.intervention_fns:
+                    modified_activation = self.intervention_fns[name](activation, name)
+                    
+                    # Return modified output
+                    if isinstance(output, tuple):
+                        return (modified_activation,) + output[1:]
+                    else:
+                        return modified_activation
+                        
             return attention_hook
         
-        self.hooks.append(attention_layer.register_forward_hook(make_attention_hook(layer_idx)))
+        self.hooks.append(attention_layer.register_forward_hook(make_attention_hook(hook_name)))
     
     def run_with_activations(
         self,
