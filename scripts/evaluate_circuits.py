@@ -236,8 +236,13 @@ def main():
             observed_sim = compute_circuit_similarity(rep_circuit, random_comp_circuit)
             print(f"Observed Similarity (Circuit vs Random): {observed_sim:.4f}")
             
-            print("Computing null distribution (100 permutations)...")
-            null_dist = compute_random_similarity_distribution(rep_circuit, random_comp_circuit, n_permutations=100)
+            print("Computing null distribution (1000 permutations)...")
+            print("  This may take a few minutes - progress bar will show status...")
+            # Use at least 1000 permutations for reliable p-values
+            # More permutations = better power and more accurate p-values
+            # Progress bar will show during computation
+            null_dist = compute_random_similarity_distribution(rep_circuit, random_comp_circuit, n_permutations=1000)
+            print(f"  Completed {len(null_dist)} permutations")
             
             stats = compute_significance(observed_sim, null_dist)
             print("Statistical Results:")

@@ -5,6 +5,7 @@ Circuit similarity computation with equalization for fair comparison.
 from typing import Dict, List, Tuple, Optional
 from .circuit import SparseFeatureCircuit
 import numpy as np
+from tqdm import tqdm
 
 
 def equalize_circuits(
@@ -190,18 +191,28 @@ def compute_random_similarity_distribution(
     Args:
         circuit1: First circuit (fixed)
         circuit2: Second circuit (to be permuted)
-        n_permutations: Number of random permutations
+        n_permutations: Number of random permutations (recommended: >= 1000 for reliable p-values)
         
     Returns:
         List of similarity scores for random permutations
     """
-    import copy
     import random
+    
+    # Validate inputs
+    if n_permutations <= 0:
+        raise ValueError(f"n_permutations must be > 0, got {n_permutations}")
+    
+    if len(circuit1.nodes) == 0 or len(circuit2.nodes) == 0:
+        # If either circuit is empty, return zeros
+        return [0.0] * n_permutations
     
     random_scores = []
     
     # Get structure of circuit2 (nodes per layer)
-    nodes2 = circuit2.get_top_nodes(100) # Use same top-N as in similarity computation
+    nodes2 = circuit2.get_top_nodes(100)  # Use same top-N as in similarity computation
+    if len(nodes2) == 0:
+        return [0.0] * n_permutations
+    
     layer_counts = {}
     for node_id in nodes2:
         layer = circuit2.nodes[node_id]['layer']
@@ -218,20 +229,31 @@ def compute_random_similarity_distribution(
     # We'll use a default max_feature_id if not provided.
     max_feature_id = 32768 
     
-    for _ in range(n_permutations):
+    # Validate that we can sample enough features
+    max_count = max(layer_counts.values()) if layer_counts else 0
+    if max_count > max_feature_id:
+        raise ValueError(
+            f"Cannot sample {max_count} features from pool of size {max_feature_id}. "
+            f"Increase max_feature_id or reduce circuit size."
+        )
+    
+    # Use tqdm for progress indication (especially important for 1000+ iterations)
+    for _ in tqdm(range(n_permutations), desc="Computing permutations", leave=False):
         # Create a random circuit with same structure as circuit2
         random_circuit = SparseFeatureCircuit()
         
         for layer, count in layer_counts.items():
-            # Sample 'count' random features for this layer
-            random_features = random.sample(range(max_feature_id), count)
-            for feat_id in random_features:
-                random_circuit.add_node(
-                    feature_id=str(feat_id),
-                    layer=layer,
-                    position=0, # Position doesn't matter for similarity if we ignore it
-                    importance=1.0 # Dummy importance
-                )
+            if count > 0:
+                # Sample 'count' random features for this layer
+                # random.sample is efficient for small counts relative to max_feature_id
+                random_features = random.sample(range(max_feature_id), count)
+                for feat_id in random_features:
+                    random_circuit.add_node(
+                        feature_id=str(feat_id),
+                        layer=layer,
+                        position=0,  # Position doesn't matter for similarity if we ignore it
+                        importance=1.0  # Dummy importance
+                    )
         
         # Compute similarity
         score = compute_circuit_similarity(circuit1, random_circuit)
@@ -247,37 +269,76 @@ def compute_significance(
     """
     Compute statistical significance of observed score vs random distribution.
     
+    Uses empirical p-value from permutation test (recommended for permutation tests).
+    Also provides z-score and normal approximation p-value for reference.
+    
     Args:
         observed_score: Observed similarity score
         random_scores: List of scores from random permutations
         
     Returns:
-        Dictionary with statistics (p_value, z_score, mean, std, ci_lower, ci_upper)
+        Dictionary with statistics (p_value, p_value_empirical, z_score, mean, std, ci_lower, ci_upper)
     """
     from scipy import stats
     
     mean = np.mean(random_scores)
     std = np.std(random_scores)
+    n_permutations = len(random_scores)
     
+    # Calculate z-score for reference
     if std > 0:
         z_score = (observed_score - mean) / std
-        # One-sided p-value (testing if observed > random)
-        p_value = 1 - stats.norm.cdf(z_score)
     else:
         z_score = 0.0
-        p_value = 1.0 if observed_score <= mean else 0.0
+    
+    # Empirical p-value (RECOMMENDED for permutation tests, especially for n=1000)
+    # Formula: (count of permutations >= observed + 1) / (n_permutations + 1)
+    # 
+    # Why this formula:
+    # 1. The +1 in numerator accounts for the observed value itself in the permutation distribution
+    # 2. The +1 in denominator ensures p-value is never exactly 0 and provides unbiased estimate
+    # 3. This is the standard approach for permutation tests (see Phipson & Smyth, 2010)
+    # 4. For n=1000: Empirical is preferred because:
+    #    - It's exact (up to Monte Carlo error) with no distributional assumptions
+    #    - Resolution is 0.001 (1/1000), which is sufficient for most applications
+    #    - Normal approximation requires normality assumption which may not hold
+    #
+    # One-sided test: testing if observed > random (circuit similarity > random similarity)
+    count_extreme = sum(1 for score in random_scores if score >= observed_score)
+    p_value_empirical = (count_extreme + 1) / (n_permutations + 1)
+    
+    # Normal approximation p-value (for reference/comparison only)
+    # For n=1000: Can be used but requires normality assumption
+    # - More precise p-values (continuous vs discrete)
+    # - But may be inaccurate if distribution is not normal
+    # - Empirical is generally preferred for permutation tests
+    if std > 0 and n_permutations > 100:
+        # One-sided p-value (testing if observed > random)
+        p_value_normal = 1 - stats.norm.cdf(z_score)
+    else:
+        p_value_normal = p_value_empirical  # Use empirical if normal approximation not reliable
+    
+    # Use empirical p-value as primary result (best practice for permutation tests)
+    p_value = p_value_empirical
         
     # 95% Confidence Interval for the random distribution
     # (Not for the observed score, but for the null hypothesis)
-    ci_lower = mean - 1.96 * std
-    ci_upper = mean + 1.96 * std
+    if std > 0:
+        ci_lower = mean - 1.96 * std
+        ci_upper = mean + 1.96 * std
+    else:
+        ci_lower = mean
+        ci_upper = mean
     
     return {
         "observed": observed_score,
         "random_mean": mean,
         "random_std": std,
         "z_score": z_score,
-        "p_value": p_value,
+        "p_value": p_value,  # Empirical p-value (primary)
+        "p_value_empirical": p_value_empirical,  # Explicit empirical
+        "p_value_normal": p_value_normal,  # Normal approximation (for reference)
+        "n_permutations": n_permutations,
         "ci_lower": ci_lower,
         "ci_upper": ci_upper
     }

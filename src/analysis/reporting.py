@@ -88,10 +88,14 @@ def generate_report(results_dir: Path, output_path: Path, format: str = 'markdow
                     content.append(f"- **Observed Similarity**: {stats.get('observed', 'N/A'):.4f}")
                     content.append(f"- **Random Baseline (Mean)**: {stats.get('random_mean', 'N/A'):.4f} ± {stats.get('random_std', 'N/A'):.4f}")
                     content.append(f"- **Z-Score**: {stats.get('z_score', 'N/A'):.4f}")
-                    content.append(f"- **P-Value**: {stats.get('p_value', 'N/A'):.4e}")
+                    content.append(f"- **P-Value (Empirical)**: {stats.get('p_value_empirical', stats.get('p_value', 'N/A')):.4e}")
+                    if 'p_value_normal' in stats:
+                        content.append(f"- **P-Value (Normal Approx.)**: {stats.get('p_value_normal', 'N/A'):.4e}")
+                    content.append(f"- **Permutations**: {stats.get('n_permutations', 'N/A')}")
                     content.append(f"- **95% CI**: [{stats.get('ci_lower', 'N/A'):.4f}, {stats.get('ci_upper', 'N/A'):.4f}]")
                     
-                    if stats.get('p_value', 1.0) < 0.05:
+                    p_val = stats.get('p_value_empirical', stats.get('p_value', 1.0))
+                    if p_val < 0.05:
                         content.append("\n> **Result**: Significant difference from random baseline (p < 0.05).")
                     else:
                         content.append("\n> **Result**: No significant difference from random baseline.")
