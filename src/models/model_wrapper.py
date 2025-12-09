@@ -17,7 +17,7 @@ class ModelConfig:
     torch_dtype: str = "float16"
     device_map: str = "auto"
     trust_remote_code: bool = False
-    cache_dir: Optional[str] = "/home/hice1/mchen692/scratch/huggingface"
+    cache_dir: Optional[str] = "/home/hice1/<gatech username>/scratch/huggingface"
 
 
 class ModelWrapper:
